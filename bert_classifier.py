@@ -22,12 +22,42 @@ from trainer import Trainer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data_file', type=Path, default='data/bbc-text.csv')
-    parser.add_argument('--model_save_path', type=Path, default='bert_classifier.pth')
-    parser.add_argument('--device', type=str, default='cpu')  # Change default to 'cpu'
-    return parser.parse_args()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description='BERT Classifier Training Script',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Add all configuration options
+    ModelConfig.add_argparse_args(parser)
+    
+    # Add any script-specific arguments here
+    parser.add_argument('--seed', type=int, default=42,
+                       help='Random seed for reproducibility')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Enable verbose output')
+    
+    args = parser.parse_args()
+    
+    # Validate CUDA availability
+    if args.device == 'cuda' and not torch.cuda.is_available():
+        parser.error("CUDA device requested but CUDA is not available")
+    
+    # Validate paths
+    if not args.data_file.exists():
+        parser.error(f"Data file not found: {args.data_file}")
+    
+    # Validate numeric arguments
+    if args.num_epochs < 1:
+        parser.error("num_epochs must be positive")
+    if args.batch_size < 1:
+        parser.error("batch_size must be positive")
+    if not 0 < args.learning_rate < 1:
+        parser.error("learning_rate must be between 0 and 1")
+    if not 0 <= args.hidden_dropout <= 1:
+        parser.error("hidden_dropout must be between 0 and 1")
+        
+    return args
 
 def load_data(config: ModelConfig):
     df = pd.read_csv(config.data_file)
@@ -67,13 +97,20 @@ def train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, c
         epoch_pbar.close()
         batch_pbar.close()
 
-def main():
+def main() -> None:
     args = parse_args()
-    config = ModelConfig(
-        data_file=args.data_file,
-        model_save_path=args.model_save_path,
-        device=args.device
-    )
+    
+    # Set random seeds for reproducibility
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(args.seed)
+    
+    # Create config from args
+    config = ModelConfig.from_args(args)
+    
+    # Set up logging
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(level=log_level)
     
     texts, labels, label_encoder = load_data(config)
     train_texts, val_texts, train_labels, val_labels = train_test_split(

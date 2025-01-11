@@ -1,7 +1,8 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, fields
+from typing import Optional, Any
 from pathlib import Path
 import torch
+import argparse
 
 @dataclass
 class ModelConfig:
@@ -16,6 +17,52 @@ class ModelConfig:
     model_save_path: Path = Path("bert_classifier.pth")
     hidden_dropout: float = 0.1
     n_trials: int = 100
+
+    @classmethod
+    def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Add ModelConfig arguments to an ArgumentParser"""
+        # Training settings
+        training = parser.add_argument_group('Training Configuration')
+        training.add_argument('--num_epochs', type=int, default=cls.num_epochs, 
+                            help='Number of training epochs')
+        training.add_argument('--batch_size', type=int, default=cls.batch_size,
+                            help='Training batch size')
+        training.add_argument('--learning_rate', type=float, default=cls.learning_rate,
+                            help='Learning rate')
+        training.add_argument('--hidden_dropout', type=float, default=cls.hidden_dropout,
+                            help='Hidden layer dropout rate')
+
+        # Model settings
+        model = parser.add_argument_group('Model Configuration')
+        model.add_argument('--bert_model_name', type=str, default=cls.bert_model_name,
+                          help='Name or path of the pre-trained BERT model')
+        model.add_argument('--num_classes', type=int, default=cls.num_classes,
+                          help='Number of output classes')
+        model.add_argument('--max_length', type=int, default=cls.max_length,
+                          help='Maximum sequence length')
+
+        # System settings
+        system = parser.add_argument_group('System Configuration')
+        system.add_argument('--device', type=str, default=cls.device,
+                          choices=['cpu', 'cuda'], help='Device to use for training')
+        system.add_argument('--n_trials', type=int, default=cls.n_trials,
+                          help='Number of optimization trials')
+
+        # File paths
+        paths = parser.add_argument_group('File Paths')
+        paths.add_argument('--data_file', type=Path, default=cls.data_file,
+                          help='Path to input data file')
+        paths.add_argument('--model_save_path', type=Path, default=cls.model_save_path,
+                          help='Path to save the trained model')
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':
+        """Create a ModelConfig instance from parsed arguments"""
+        # Get all field names from the dataclass
+        field_names = {f.name for f in fields(cls)}
+        # Filter args.__dict__ to only include fields that exist in ModelConfig
+        config_args = {k: v for k, v in vars(args).items() if k in field_names}
+        return cls(**config_args)
 
     def validate(self) -> None:
         """Validate configuration parameters."""

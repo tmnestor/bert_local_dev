@@ -30,9 +30,19 @@ def objective(
     logger.info(f"\nStarting trial #{trial.number}")
     logger.info("Sampling hyperparameters...")
     
+    # Calculate layer sizes
+    initial_size = BertModel.from_pretrained(config.bert_model_name).config.hidden_size
+    current_size = initial_size
+    layer_sizes = [initial_size]
+    
+    num_layers = trial.suggest_int('num_layers', 1, 4)
+    for _ in range(num_layers):
+        current_size = current_size // 2
+        layer_sizes.append(current_size)
+    
     # Define hyperparameters to optimize
     classifier_config = {
-        'num_layers': trial.suggest_int('num_layers', 1, 4),
+        'num_layers': num_layers,
         'activation': trial.suggest_categorical('activation', ['relu', 'leaky_relu', 'elu', 'gelu', 'selu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5) if trial.suggest_categorical('regularization', ['dropout', 'batchnorm']) == 'dropout' else 0.0,
@@ -42,6 +52,11 @@ def objective(
     logger.info(f"Trial #{trial.number} hyperparameters:")
     for key, value in classifier_config.items():
         logger.info(f"  {key}: {value}")
+    
+    logger.info("Layer architecture:")
+    for i, size in enumerate(layer_sizes[:-1]):
+        logger.info(f"  Layer {i}: {size} -> {layer_sizes[i+1]}")
+    logger.info(f"  Output: {layer_sizes[-1]} -> {config.num_classes}")
     
     # Split data
     train_texts, val_texts, train_labels, val_labels = train_test_split(
@@ -114,7 +129,9 @@ def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm
     epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=True)
     return trial_pbar, epoch_pbar
 
-def run_optimization(config: ModelConfig, n_trials: int = 100) -> Dict[str, Any]:
+def run_optimization(config: ModelConfig, timeout: Optional[int] = None, 
+                    study_name: str = 'bert_optimization',
+                    storage: Optional[str] = None) -> Dict[str, Any]:
     config.n_trials = n_trials  # Set n_trials in config
     logger.info("\n" + "="*50)
     logger.info("Starting optimization")
@@ -142,6 +159,8 @@ def run_optimization(config: ModelConfig, n_trials: int = 100) -> Dict[str, Any]
     # Create study
     logger.info("\nCreating Optuna study...")
     study = optuna.create_study(
+        study_name=study_name,
+        storage=storage,
         direction="maximize",
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5)
     )
@@ -158,7 +177,7 @@ def run_optimization(config: ModelConfig, n_trials: int = 100) -> Dict[str, Any]
         study.optimize(
             objective_with_progress,
             n_trials=n_trials,
-            timeout=None,
+            timeout=timeout,
             show_progress_bar=True
         )
     finally:
@@ -179,11 +198,31 @@ def run_optimization(config: ModelConfig, n_trials: int = 100) -> Dict[str, Any]
     return study.best_params
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--n_trials', type=int, default=100, help='Number of Optuna trials to run')
-    parser.add_argument('--data_file', type=Path, default='data/bbc-text.csv')
-    parser.add_argument('--device', type=str, default='cpu')
-    return parser.parse_args()
+    parser = argparse.ArgumentParser(
+        description='BERT Classifier Hyperparameter Optimization',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Add all configuration options
+    ModelConfig.add_argparse_args(parser)
+    
+    # Add optimization-specific arguments
+    optim = parser.add_argument_group('Optimization')
+    optim.add_argument('--timeout', type=int, default=None,
+                      help='Optimization timeout in seconds')
+    optim.add_argument('--study-name', type=str, default='bert_optimization',
+                      help='Name for the Optuna study')
+    optim.add_argument('--storage', type=str, default=None,
+                      help='Database URL for Optuna storage')
+    
+    args = parser.parse_args()
+    
+    # Validate arguments (similar to bert_classifier.py)
+    if args.device == 'cuda' and not torch.cuda.is_available():
+        parser.error("CUDA device requested but CUDA is not available")
+    # ...other validations...
+    
+    return args
 
 if __name__ == "__main__":
     # Set up logging to both file and console with more verbose settings
@@ -205,11 +244,16 @@ if __name__ == "__main__":
     print(f"Parsed arguments: n_trials={args.n_trials}, device={args.device}, data_file={args.data_file}")
     
     print("Initializing ModelConfig...")
-    config = ModelConfig(data_file=args.data_file, device=args.device)
+    config = ModelConfig.from_args(args)
     
     print("Starting optimization run...")
     try:
-        best_params = run_optimization(config, n_trials=args.n_trials)
+        best_params = run_optimization(
+            config,
+            timeout=args.timeout,
+            study_name=args.study_name,
+            storage=args.storage
+        )
         print("Optimization completed successfully")
         print(f"Best parameters found: {best_params}")
     except Exception as e:

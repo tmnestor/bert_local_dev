@@ -3,6 +3,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers import BertModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BERTClassifier(nn.Module):
     def __init__(self, bert_model_name: str, num_classes: int, classifier_config: Dict[str, Any]) -> None:
@@ -45,14 +48,20 @@ class BERTClassifier(nn.Module):
         layers = []
         current_size = input_size
         
+        logger.info(f"\nClassifier architecture:")
+        logger.info(f"Input size: {current_size}")
+        
         for i in range(config['num_layers']):
             next_size = current_size // 2
+            logger.info(f"Layer {i+1}: {current_size} -> {next_size}")
             layers.append(nn.Linear(current_size, next_size))
             layers.append(self._get_activation(config['activation']))
             layers.append(self._get_regularization(config['regularization'], config['dropout_rate'], next_size))
             current_size = next_size
         
+        logger.info(f"Output layer: {current_size} -> {num_classes}")
         layers.append(nn.Linear(current_size, num_classes))
+        
         return nn.Sequential(*layers)
 
     def _get_activation(self, activation: str) -> nn.Module:
