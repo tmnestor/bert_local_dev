@@ -4,13 +4,17 @@ import torch
 from torch.utils.data import DataLoader
 import logging
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder  # Add this import
+from sklearn.preprocessing import LabelEncoder
 import pandas as pd
 import argparse
 from pathlib import Path
 from tqdm.auto import tqdm
 from functools import partial
-from transformers import BertTokenizer, get_linear_schedule_with_warmup  # Add this import
+from transformers import (
+    BertTokenizer,
+    BertModel,  # Add this import
+    get_linear_schedule_with_warmup
+)
 
 from config import ModelConfig
 from model import BERTClassifier
@@ -132,10 +136,9 @@ def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm
 def run_optimization(config: ModelConfig, timeout: Optional[int] = None, 
                     study_name: str = 'bert_optimization',
                     storage: Optional[str] = None) -> Dict[str, Any]:
-    config.n_trials = n_trials  # Set n_trials in config
     logger.info("\n" + "="*50)
     logger.info("Starting optimization")
-    logger.info(f"Number of trials: {n_trials}")
+    logger.info(f"Number of trials: {config.n_trials}")
     logger.info(f"Model config:")
     logger.info(f"  BERT model: {config.bert_model_name}")
     logger.info(f"  Device: {config.device}")
@@ -154,7 +157,7 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     
     # Create progress bars
     logger.info("\nInitializing progress bars...")
-    trial_pbar, epoch_pbar = initialize_progress_bars(n_trials, config.num_epochs)
+    trial_pbar, epoch_pbar = initialize_progress_bars(config.n_trials, config.num_epochs)
     
     # Create study
     logger.info("\nCreating Optuna study...")
@@ -176,7 +179,7 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     try:
         study.optimize(
             objective_with_progress,
-            n_trials=n_trials,
+            n_trials=config.n_trials,  # Use config.n_trials instead of undefined n_trials
             timeout=timeout,
             show_progress_bar=True
         )
