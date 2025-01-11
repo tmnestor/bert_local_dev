@@ -76,9 +76,22 @@ def objective(
         'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
         'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
+        classifier_config['init_scale'] = trial.suggest_float('init_scale', 0.01, 0.1, log=True)
+    
+    # Parameter constraints
+    if classifier_config['hidden_dim'] < 256:
+        # Smaller networks might need higher learning rates
+        classifier_config['learning_rate'] = max(classifier_config['learning_rate'], 1e-4)
+    
+    classifier_config.update({
+        'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
+        'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128]),
+        'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
+        'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
+        'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
         'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])
-    }
+    })
 
     # Update config with trial-specific parameters
     config.learning_rate = classifier_config['learning_rate']
@@ -134,51 +147,46 @@ def objective(
     patience = max(3, trial.number // 10)  # Increase patience as trials progress
     best_accuracy = 0
     no_improve_count = 0
-    
-    # Training loop
-    if epoch_pbar is not None:
-        epoch_pbar.reset()
-        epoch_pbar.total = config.num_epochs
-        
-    if trial_pbar is not None:
-        trial_pbar.set_description(f'Trial {trial.number}/{config.n_trials}')  # Use config.n_trials
-        
-    for epoch in range(config.num_epochs):
-        if epoch_pbar is not None:
-            epoch_pbar.set_description(f'Trial {trial.number} Epoch {epoch+1}/{config.num_epochs}')
-        
-        trainer.train_epoch(train_dataloader, optimizer, scheduler)
-        accuracy, _ = trainer.evaluate(val_dataloader)
-        
-        if epoch_pbar is not None:
-            epoch_pbar.update(1)
-            epoch_pbar.set_postfix({
-                'accuracy': f'{accuracy:.4f}',
-                'trial': f'{trial.number}/{config.n_trials}'  # Use config.n_trials
-            })
+            trial_pbar.set_description(f'Trial {trial.number}/{config.n_trials}')  # Use config.n_trials
             
-        trial.report(accuracy, epoch)
-        
-        # Handle early stopping
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
-            no_improve_count = 0
-        else:
-            no_improve_count += 1
+        for epoch in range(config.num_epochs):
+            if epoch_pbar is not None:
+                epoch_pbar.set_description(f'Trial {trial.number} Epoch {epoch+1}/{config.num_epochs}')
             
-        # Pruning check
-        if trial.should_prune() or no_improve_count >= patience:
-            logger.info(f"Trial #{trial.number} pruned!")
-            raise optuna.TrialPruned()
+            trainer.train_epoch(train_dataloader, optimizer, scheduler)
+            accuracy, _ = trainer.evaluate(val_dataloader)
             
-        best_accuracy = max(best_accuracy, accuracy)
-    
-    logger.info(f"Trial #{trial.number} finished with best accuracy: {best_accuracy:.4f}")
-    
-    if trial_pbar is not None:
-        trial_pbar.update(1)
+            if epoch_pbar is not None:
+                epoch_pbar.update(1)
+                epoch_pbar.set_postfix({
+                    'accuracy': f'{accuracy:.4f}',
+                    'trial': f'{trial.number}/{config.n_trials}'  # Use config.n_trials
+                })
+                
+            trial.report(accuracy, epoch)
+            
+            # Handle early stopping
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                no_improve_count = 0
+            else:
+                no_improve_count += 1
+                
+            # Pruning check
+            if trial.should_prune() or no_improve_count >= patience:
+                logger.info(f"Trial #{trial.number} pruned!")
+                raise optuna.TrialPruned()
+                
+            best_accuracy = max(best_accuracy, accuracy)
         
-    return best_accuracy
+        logger.info(f"Trial #{trial.number} finished with best accuracy: {best_accuracy:.4f}")
+        
+        if trial_pbar is not None:
+            trial_pbar.update(1)
+            
+        fold_scores.append(best_accuracy)
+    
+    return np.mean(fold_scores)
 
 def load_data(config: ModelConfig) -> Tuple[List[str], List[int], LabelEncoder]:
     df = pd.read_csv(config.data_file)
@@ -378,10 +386,43 @@ if __name__ == "__main__":
             timeout=args.timeout,
             study_name=args.study_name,
             storage=args.storage
+
         )
         print("Optimization completed successfully")
         print(f"Best parameters found: {best_params}")
     except Exception as e:
         print(f"Error during optimization: {str(e)}")
         logger.error("Error during optimization", exc_info=True)
+        raise
+
+    config = ModelConfig.from_args(args)
+    
+    print("Starting optimization run...")
+    try:
+        best_params = run_optimization(
+            config,
+            timeout=args.timeout,
+            study_name=args.study_name,
+            storage=args.storage
+        )
+        print("Optimization completed successfully")
+        print(f"Best parameters found: {best_params}")
+    except Exception as e:
+        print(f"Error during optimization: {str(e)}")
+        logger.error("Error during optimization", exc_info=True)
+        raise
+
+        best_params = run_optimization(
+            config,
+            timeout=args.timeout,
+            study_name=args.study_name,
+            storage=args.storage
+        )
+        print("Optimization completed successfully")
+        print(f"Best parameters found: {best_params}")
+    except Exception as e:
+        print(f"Error during optimization: {str(e)}")
+        logger.error("Error during optimization", exc_info=True)
+        raise
+
         raise
