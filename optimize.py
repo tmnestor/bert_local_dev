@@ -76,8 +76,11 @@ def objective(
         'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
         'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
-        classifier_config['init_scale'] = trial.suggest_float('init_scale', 0.01, 0.1, log=True)
-    
+        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
+        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
+        'init_scale': trial.suggest_float('init_scale', 0.01, 0.1, log=True)
+    }
+
     # Parameter constraints
     if classifier_config['hidden_dim'] < 256:
         # Smaller networks might need higher learning rates
@@ -143,50 +146,52 @@ def objective(
         num_training_steps=total_steps
     )
     
-    # Early stopping implementation
-    patience = max(3, trial.number // 10)  # Increase patience as trials progress
-    best_accuracy = 0
+    # Training loop
+    best_accuracy = 0.0
     no_improve_count = 0
-            trial_pbar.set_description(f'Trial {trial.number}/{config.n_trials}')  # Use config.n_trials
-            
-        for epoch in range(config.num_epochs):
-            if epoch_pbar is not None:
-                epoch_pbar.set_description(f'Trial {trial.number} Epoch {epoch+1}/{config.num_epochs}')
-            
-            trainer.train_epoch(train_dataloader, optimizer, scheduler)
-            accuracy, _ = trainer.evaluate(val_dataloader)
-            
-            if epoch_pbar is not None:
-                epoch_pbar.update(1)
-                epoch_pbar.set_postfix({
-                    'accuracy': f'{accuracy:.4f}',
-                    'trial': f'{trial.number}/{config.n_trials}'  # Use config.n_trials
-                })
-                
-            trial.report(accuracy, epoch)
-            
-            # Handle early stopping
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
-                no_improve_count = 0
-            else:
-                no_improve_count += 1
-                
-            # Pruning check
-            if trial.should_prune() or no_improve_count >= patience:
-                logger.info(f"Trial #{trial.number} pruned!")
-                raise optuna.TrialPruned()
-                
-            best_accuracy = max(best_accuracy, accuracy)
-        
-        logger.info(f"Trial #{trial.number} finished with best accuracy: {best_accuracy:.4f}")
-        
-        if trial_pbar is not None:
-            trial_pbar.update(1)
-            
-        fold_scores.append(best_accuracy)
+    patience = max(3, trial.number // 10)  # Increase patience as trials progress
     
-    return np.mean(fold_scores)
+    if epoch_pbar is not None:
+        epoch_pbar.reset()
+        epoch_pbar.total = config.num_epochs
+    
+    if trial_pbar is not None:
+        trial_pbar.set_description(f'Trial {trial.number}/{config.n_trials}')
+    
+    for epoch in range(config.num_epochs):
+        if epoch_pbar is not None:
+            epoch_pbar.set_description(f'Trial {trial.number} Epoch {epoch+1}/{config.num_epochs}')
+        
+        trainer.train_epoch(train_dataloader, optimizer, scheduler)
+        accuracy, _ = trainer.evaluate(val_dataloader)
+        
+        if epoch_pbar is not None:
+            epoch_pbar.update(1)
+            epoch_pbar.set_postfix({
+                'accuracy': f'{accuracy:.4f}',
+                'trial': f'{trial.number}/{config.n_trials}'
+            })
+        
+        trial.report(accuracy, epoch)
+        
+        # Handle early stopping
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+        
+        # Pruning check
+        if trial.should_prune() or no_improve_count >= patience:
+            logger.info(f"Trial #{trial.number} pruned!")
+            raise optuna.TrialPruned()
+    
+    logger.info(f"Trial #{trial.number} finished with best accuracy: {best_accuracy:.4f}")
+    
+    if trial_pbar is not None:
+        trial_pbar.update(1)
+    
+    return best_accuracy
 
 def load_data(config: ModelConfig) -> Tuple[List[str], List[int], LabelEncoder]:
     df = pd.read_csv(config.data_file)
