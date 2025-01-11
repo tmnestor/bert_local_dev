@@ -15,13 +15,40 @@ from transformers import (
     BertModel,  # Add this import
     get_linear_schedule_with_warmup
 )
+from optuna.samplers import TPESampler, CmaEsSampler
+from optuna.pruners import SuccessiveHalvingPruner, HyperbandPruner
 
 from config import ModelConfig
 from model import BERTClassifier
 from dataset import TextClassificationDataset
 from trainer import Trainer
+import yaml  # Add this import at the top
 
 logger = logging.getLogger(__name__)
+
+def create_study(study_name: str, storage: Optional[str] = None) -> optuna.Study:
+    """Create an Optuna study with enhanced sampling and pruning"""
+    sampler = TPESampler(
+        n_startup_trials=10,  # More startup trials for better exploration
+        n_ei_candidates=24,   # More candidates for expected improvement
+        multivariate=True,    # Consider parameter relationships
+        seed=42
+    )
+
+    pruner = HyperbandPruner(
+        min_resource=1,
+        max_resource=10,
+        reduction_factor=3
+    )
+
+    return optuna.create_study(
+        study_name=study_name,
+        storage=storage,
+        direction="maximize",
+        sampler=sampler,
+        pruner=pruner,
+        load_if_exists=True
+    )
 
 def objective(
     trial: optuna.Trial,
@@ -46,17 +73,22 @@ def objective(
     
     # Define hyperparameters to optimize
     classifier_config = {
-        'num_layers': num_layers,
-        'activation': trial.suggest_categorical('activation', ['relu', 'leaky_relu', 'elu', 'gelu', 'selu']),
+        'num_layers': trial.suggest_int('num_layers', 1, 6),
+        'hidden_dim': trial.suggest_int('hidden_dim', 64, 1024, log=True),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-6, 1e-3, log=True),
+        'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
+        'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128]),
+        'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
+        'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
         'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
-        'warmup_steps': trial.suggest_int('warmup_steps', 0, 2000),
-        'weight_decay': trial.suggest_float('weight_decay', 1e-5, 1e-1, log=True),
-        'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     }
-    
+
+    # Dynamic warmup steps based on ratio
+    total_steps = len(train_dataloader) * config.num_epochs
+    classifier_config['warmup_steps'] = int(total_steps * classifier_config['warmup_ratio'])
+
     # Update config with trial-specific parameters
     config.learning_rate = classifier_config['learning_rate']
     config.batch_size = classifier_config['batch_size']
@@ -101,7 +133,7 @@ def objective(
     )
     
     # Early stopping implementation
-    patience = 3
+    patience = max(3, trial.number // 10)  # Increase patience as trials progress
     best_accuracy = 0
     no_improve_count = 0
     
@@ -190,22 +222,20 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     
     # Create study
     logger.info("\nCreating Optuna study...")
-    study = optuna.create_study(
-        study_name=study_name,
-        storage=storage,
-        direction="maximize",
-        pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=5,
-            n_warmup_steps=5,
-            interval_steps=1,
-            n_min_trials=10
-        ),
-        sampler=optuna.samplers.TPESampler(
-            n_startup_trials=10,
-            n_ei_candidates=24,
-            seed=42
-        )
-    )
+    study = create_study(study_name, storage)
+    
+    # Add callbacks for better analysis
+    study.set_user_attr("best_value", 0.0)
+    
+    def callback(study: optuna.Study, trial: optuna.Trial):
+        if trial.value > study.user_attrs["best_value"]:
+            study.set_user_attr("best_value", trial.value)
+            # Save best trial info
+            torch.save({
+                'trial_number': trial.number,
+                'params': trial.params,
+                'value': trial.value
+            }, f'best_trial_{study_name}.pt')
     
     # Run optimization with progress bars
     objective_with_progress = partial(objective, 
@@ -220,12 +250,45 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
             objective_with_progress,
             n_trials=config.n_trials,  # Use config.n_trials instead of undefined n_trials
             timeout=timeout,
-            show_progress_bar=True
+            callbacks=[callback],
+            gc_after_trial=True  # Add garbage collection
         )
     finally:
         # Clean up progress bars
         trial_pbar.close()
         epoch_pbar.close()
+        
+        # Plot optimization results
+        try:
+            from optuna.visualization import plot_optimization_history, plot_parallel_coordinate
+            import plotly
+            
+            figs = {
+                'optimization_history': plot_optimization_history(study),
+                'parallel_coordinate': plot_parallel_coordinate(study),
+                'param_importances': optuna.visualization.plot_param_importances(study),
+                'slice_plot': optuna.visualization.plot_slice(study)
+            }
+            
+            for name, fig in figs.items():
+                fig.write_html(f"{name}_{study_name}.html")
+                
+        except ImportError:
+            logger.warning("Plotly not installed. Skipping visualization.")
+            
+        # Save study statistics in YAML instead of JSON
+        study_stats = {
+            'best_trial': study.best_trial.number,
+            'best_value': float(study.best_trial.value),  # Convert numpy float to Python float
+            'best_params': dict(study.best_trial.params),  # Convert to regular dict
+            'n_trials': len(study.trials),
+            'n_complete': len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]),
+            'n_pruned': len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
+        }
+        
+        # Save as YAML instead of JSON
+        with open(f'study_stats_{study_name}.yaml', 'w') as f:
+            yaml.safe_dump(study_stats, f, default_flow_style=False, sort_keys=False)
     
     logger.info("\n" + "="*50)
     logger.info("Optimization finished!")
