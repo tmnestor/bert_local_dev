@@ -49,13 +49,12 @@ def objective(
         'num_layers': num_layers,
         'activation': trial.suggest_categorical('activation', ['relu', 'leaky_relu', 'elu', 'gelu', 'selu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
-        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5) if trial.suggest_categorical('regularization', ['dropout', 'batchnorm']) == 'dropout' else 0.0,
-        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])  # Add this line
-    }
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
         'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
         'warmup_steps': trial.suggest_int('warmup_steps', 0, 2000),
-        'weight_decay': trial.suggest_float('weight_decay', 1e-5, 1e-1, log=True)
+        'weight_decay': trial.suggest_float('weight_decay', 1e-5, 1e-1, log=True),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True),
+        'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     }
     
     # Update config with trial-specific parameters
