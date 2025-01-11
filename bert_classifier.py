@@ -35,6 +35,38 @@ def load_data(config: ModelConfig):
     labels = le.fit_transform(df["category"])
     return df['text'].tolist(), labels.tolist(), le
 
+def train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, config, trainer):
+    epoch_pbar = tqdm(total=config.num_epochs, desc='Training', position=0)
+    batch_pbar = tqdm(total=len(train_dataloader), desc='Epoch Progress', position=1, leave=False)
+    
+    try:
+        for epoch in range(config.num_epochs):
+            epoch_pbar.set_description(f'Epoch {epoch + 1}/{config.num_epochs}')
+            batch_pbar.reset()
+            
+            model.train()
+            for batch in train_dataloader:
+                optimizer.zero_grad()
+                outputs = model(
+                    input_ids=batch['input_ids'].to(config.device),
+                    attention_mask=batch['attention_mask'].to(config.device)
+                )
+                loss = nn.CrossEntropyLoss()(outputs, batch['label'].to(config.device))
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+                batch_pbar.update(1)
+            
+            accuracy, report = trainer.evaluate(val_dataloader)
+            epoch_pbar.set_postfix({'accuracy': f'{accuracy:.4f}'})
+            epoch_pbar.update(1)
+            
+            if (epoch + 1) % 5 == 0:
+                logger.info(f"\nClassification Report:\n{report}")
+    finally:
+        epoch_pbar.close()
+        batch_pbar.close()
+
 def main():
     args = parse_args()
     config = ModelConfig(
@@ -48,7 +80,6 @@ def main():
         texts, labels, test_size=0.2, random_state=42
     )
     
-    # Define default classifier configuration
     classifier_config = {
         'num_layers': 2,
         'activation': 'relu',
@@ -72,54 +103,10 @@ def main():
     trainer = Trainer(model, config)
     
     optimizer = AdamW(model.parameters(), lr=config.learning_rate)
-    total_steps = len(train_dataloader) * config.num_epochs  # Total training steps
+    total_steps = len(train_dataloader) * config.num_epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
     
-    # Create progress bars
-    epoch_pbar = tqdm(total=config.num_epochs, desc='Training', position=0)
-    batch_pbar = tqdm(total=len(train_dataloader), desc='Epoch Progress', position=1, leave=False)
-    
-    try:
-        for epoch in range(config.num_epochs):  # Number of epochs
-            # Update epoch progress bar
-            epoch_pbar.set_description(f'Epoch {epoch + 1}/{config.num_epochs}')
-            
-            # Reset batch progress bar
-            batch_pbar.reset()
-            
-            # Training
-            model.train()
-            for batch in train_dataloader:
-                optimizer.zero_grad()
-                outputs = model(
-                    input_ids=batch['input_ids'].to(config.device),
-                    attention_mask=batch['attention_mask'].to(config.device)
-                )
-                loss = nn.CrossEntropyLoss()(outputs, batch['label'].to(config.device))
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
-                
-                # Update batch progress
-                batch_pbar.update(1)
-            
-            # Evaluation
-            accuracy, report = trainer.evaluate(val_dataloader)
-            
-            # Update progress bar with metrics
-            epoch_pbar.set_postfix({
-                'accuracy': f'{accuracy:.4f}'
-            })
-            epoch_pbar.update(1)
-            
-            # Log detailed report less frequently
-            if (epoch + 1) % 5 == 0:  # Log every 5 epochs
-                logger.info(f"\nClassification Report:\n{report}")
-    
-    finally:
-        # Clean up progress bars
-        epoch_pbar.close()
-        batch_pbar.close()
+    train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, config, trainer)
     
     torch.save(model.state_dict(), config.model_save_path)
     logger.info(f"Model saved to {config.model_save_path}")

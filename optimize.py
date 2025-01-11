@@ -1,3 +1,4 @@
+from typing import Dict, List, Tuple, Optional, Any
 import optuna
 import torch
 from torch.utils.data import DataLoader
@@ -18,7 +19,14 @@ from trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
-def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_pbar=None):
+def objective(
+    trial: optuna.Trial,
+    config: ModelConfig,
+    texts: List[str],
+    labels: List[int],
+    trial_pbar: Optional[tqdm] = None,
+    epoch_pbar: Optional[tqdm] = None
+) -> float:
     logger.info(f"\nStarting trial #{trial.number}")
     logger.info("Sampling hyperparameters...")
     
@@ -27,7 +35,8 @@ def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_
         'num_layers': trial.suggest_int('num_layers', 1, 4),
         'activation': trial.suggest_categorical('activation', ['relu', 'leaky_relu', 'elu', 'gelu', 'selu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
-        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5) if trial.suggest_categorical('regularization', ['dropout', 'batchnorm']) == 'dropout' else 0.0
+        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5) if trial.suggest_categorical('regularization', ['dropout', 'batchnorm']) == 'dropout' else 0.0,
+        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])  # Add this line
     }
     
     logger.info(f"Trial #{trial.number} hyperparameters:")
@@ -40,7 +49,7 @@ def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_
     )
     
     # Create datasets and dataloaders
-    tokenizer = BertTokenizer.from_pretrained(config.bert_model_name)
+    tokenizer = BertTokenizer.from_pretrained(config.bert_model_name, clean_up_tokenization_spaces=True)
     train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
     val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
     
@@ -93,7 +102,19 @@ def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_
         
     return best_accuracy
 
-def run_optimization(config: ModelConfig, n_trials: int = 100):
+def load_data(config: ModelConfig) -> Tuple[List[str], List[int], LabelEncoder]:
+    df = pd.read_csv(config.data_file)
+    le = LabelEncoder()
+    texts = df['text'].tolist()
+    labels = le.fit_transform(df["category"]).tolist()
+    return texts, labels, le
+
+def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
+    trial_pbar = tqdm(total=n_trials, desc='Trials', position=0)
+    epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=True)
+    return trial_pbar, epoch_pbar
+
+def run_optimization(config: ModelConfig, n_trials: int = 100) -> Dict[str, Any]:
     config.n_trials = n_trials  # Set n_trials in config
     logger.info("\n" + "="*50)
     logger.info("Starting optimization")
@@ -109,19 +130,14 @@ def run_optimization(config: ModelConfig, n_trials: int = 100):
     
     # Load data
     logger.info("\nLoading data...")
-    df = pd.read_csv(config.data_file)
-    logger.info(f"Loaded {len(df)} samples")
-    
-    le = LabelEncoder()
-    texts = df['text'].tolist()
-    labels = le.fit_transform(df["category"]).tolist()
+    texts, labels, _ = load_data(config)
+    logger.info(f"Loaded {len(texts)} samples")
     logger.info(f"Number of classes: {len(set(labels))}")
     logger.info(f"Label distribution: {pd.Series(labels).value_counts().to_dict()}")
     
     # Create progress bars
     logger.info("\nInitializing progress bars...")
-    trial_pbar = tqdm(total=n_trials, desc='Trials', position=0)
-    epoch_pbar = tqdm(total=config.num_epochs, desc='Epochs', position=1, leave=True)
+    trial_pbar, epoch_pbar = initialize_progress_bars(n_trials, config.num_epochs)
     
     # Create study
     logger.info("\nCreating Optuna study...")
@@ -162,7 +178,7 @@ def run_optimization(config: ModelConfig, n_trials: int = 100):
     
     return study.best_params
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_trials', type=int, default=100, help='Number of Optuna trials to run')
     parser.add_argument('--data_file', type=Path, default='data/bbc-text.csv')
