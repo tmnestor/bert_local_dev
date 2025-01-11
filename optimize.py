@@ -63,7 +63,7 @@ def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_
         epoch_pbar.total = config.num_epochs
         
     if trial_pbar is not None:
-        trial_pbar.set_description(f'Trial {trial.number}/{n_trials}')
+        trial_pbar.set_description(f'Trial {trial.number}/{config.n_trials}')  # Use config.n_trials
         
     for epoch in range(config.num_epochs):
         if epoch_pbar is not None:
@@ -76,7 +76,7 @@ def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_
             epoch_pbar.update(1)
             epoch_pbar.set_postfix({
                 'accuracy': f'{accuracy:.4f}',
-                'trial': f'{trial.number}/{n_trials}'
+                'trial': f'{trial.number}/{config.n_trials}'  # Use config.n_trials
             })
             
         trial.report(accuracy, epoch)
@@ -94,6 +94,7 @@ def objective(trial, config: ModelConfig, texts, labels, trial_pbar=None, epoch_
     return best_accuracy
 
 def run_optimization(config: ModelConfig, n_trials: int = 100):
+    config.n_trials = n_trials  # Set n_trials in config
     logger.info("\n" + "="*50)
     logger.info("Starting optimization")
     logger.info(f"Number of trials: {n_trials}")
@@ -139,10 +140,10 @@ def run_optimization(config: ModelConfig, n_trials: int = 100):
     
     try:
         study.optimize(
-            lambda trial: objective_with_progress(trial, n_trials=n_trials),
+            objective_with_progress,
             n_trials=n_trials,
             timeout=None,
-            show_progress_bar=True  # Add this if your optuna version supports it
+            show_progress_bar=True
         )
     finally:
         # Clean up progress bars

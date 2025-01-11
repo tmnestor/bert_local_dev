@@ -53,10 +53,11 @@ def main():
         'num_layers': 2,
         'activation': 'relu',
         'regularization': 'dropout',
-        'dropout_rate': config.hidden_dropout
+        'dropout_rate': config.hidden_dropout,
+        'cls_pooling': True
     }
     
-    tokenizer = BertTokenizer.from_pretrained(config.bert_model_name)
+    tokenizer = BertTokenizer.from_pretrained(config.bert_model_name, clean_up_tokenization_spaces=True)
     train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
     val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
     
@@ -71,7 +72,7 @@ def main():
     trainer = Trainer(model, config)
     
     optimizer = AdamW(model.parameters(), lr=config.learning_rate)
-    total_steps = len(train_dataloader) * config.num_epochs
+    total_steps = len(train_dataloader) * config.num_epochs  # Total training steps
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
     
     # Create progress bars
@@ -79,7 +80,7 @@ def main():
     batch_pbar = tqdm(total=len(train_dataloader), desc='Epoch Progress', position=1, leave=False)
     
     try:
-        for epoch in range(config.num_epochs):
+        for epoch in range(config.num_epochs):  # Number of epochs
             # Update epoch progress bar
             epoch_pbar.set_description(f'Epoch {epoch + 1}/{config.num_epochs}')
             
