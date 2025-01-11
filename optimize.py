@@ -52,6 +52,15 @@ def objective(
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5) if trial.suggest_categorical('regularization', ['dropout', 'batchnorm']) == 'dropout' else 0.0,
         'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])  # Add this line
     }
+        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
+        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
+        'warmup_steps': trial.suggest_int('warmup_steps', 0, 2000),
+        'weight_decay': trial.suggest_float('weight_decay', 1e-5, 1e-1, log=True)
+    }
+    
+    # Update config with trial-specific parameters
+    config.learning_rate = classifier_config['learning_rate']
+    config.batch_size = classifier_config['batch_size']
     
     logger.info(f"Trial #{trial.number} hyperparameters:")
     for key, value in classifier_config.items():
@@ -80,12 +89,24 @@ def objective(
     trainer = Trainer(model, config)
     
     # Training setup
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=classifier_config['learning_rate'],
+        weight_decay=classifier_config['weight_decay']
+    )
     total_steps = len(train_dataloader) * config.num_epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=classifier_config['warmup_steps'],
+        num_training_steps=total_steps
+    )
+    
+    # Early stopping implementation
+    patience = 3
+    best_accuracy = 0
+    no_improve_count = 0
     
     # Training loop
-    best_accuracy = 0.0
     if epoch_pbar is not None:
         epoch_pbar.reset()
         epoch_pbar.total = config.num_epochs
@@ -108,7 +129,16 @@ def objective(
             })
             
         trial.report(accuracy, epoch)
-        if trial.should_prune():
+        
+        # Handle early stopping
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+            
+        # Pruning check
+        if trial.should_prune() or no_improve_count >= patience:
             logger.info(f"Trial #{trial.number} pruned!")
             raise optuna.TrialPruned()
             
@@ -165,7 +195,17 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
         study_name=study_name,
         storage=storage,
         direction="maximize",
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5)
+        pruner=optuna.pruners.MedianPruner(
+            n_startup_trials=5,
+            n_warmup_steps=5,
+            interval_steps=1,
+            n_min_trials=10
+        ),
+        sampler=optuna.samplers.TPESampler(
+            n_startup_trials=10,
+            n_ei_candidates=24,
+            seed=42
+        )
     )
     
     # Run optimization with progress bars
@@ -225,6 +265,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("CUDA device requested but CUDA is not available")
     # ...other validations...
     
+    
     return args
 
 if __name__ == "__main__":
@@ -243,6 +284,27 @@ if __name__ == "__main__":
     print("="*50)
     print("Starting Optuna optimization script")
     
+    args = parse_args()
+    print(f"Parsed arguments: n_trials={args.n_trials}, device={args.device}, data_file={args.data_file}")
+    
+    print("Initializing ModelConfig...")
+    config = ModelConfig.from_args(args)
+    
+    print("Starting optimization run...")
+    try:
+        best_params = run_optimization(
+            config,
+            timeout=args.timeout,
+            study_name=args.study_name,
+            storage=args.storage
+        )
+        print("Optimization completed successfully")
+        print(f"Best parameters found: {best_params}")
+    except Exception as e:
+        print(f"Error during optimization: {str(e)}")
+        logger.error("Error during optimization", exc_info=True)
+        raise
+
     args = parse_args()
     print(f"Parsed arguments: n_trials={args.n_trials}, device={args.device}, data_file={args.data_file}")
     
