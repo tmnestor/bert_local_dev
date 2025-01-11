@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     # Add all configuration options
     ModelConfig.add_argparse_args(parser)
     
+    # Add model loading arguments
+    parser.add_argument('--load_model', type=Path, default=None,
+                       help='Path to model checkpoint to load')
+    parser.add_argument('--evaluate', action='store_true',
+                       help='Evaluate loaded model on validation set')
     # Add any script-specific arguments here
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducibility')
@@ -64,6 +69,25 @@ def load_data(config: ModelConfig):
     le = LabelEncoder()
     labels = le.fit_transform(df["category"])
     return df['text'].tolist(), labels.tolist(), le
+
+def load_best_model(model_path: Path, config: ModelConfig) -> BERTClassifier:
+    """Load the best model from a checkpoint file."""
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
+    
+    logger.info(f"Loading model from {model_path}")
+    checkpoint = torch.load(model_path, weights_only=False)
+    
+    model = BERTClassifier(
+        bert_model_name=config.bert_model_name,
+        num_classes=config.num_classes,
+        classifier_config=checkpoint['config']
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    logger.info(f"Loaded model from trial {checkpoint['trial_number']}")
+    logger.info(f"Model accuracy: {checkpoint['accuracy']:.4f}")
+    return model
 
 def train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, config, trainer):
     epoch_pbar = tqdm(total=config.num_epochs, desc='Training', position=0)
@@ -117,14 +141,7 @@ def main() -> None:
         texts, labels, test_size=0.2, random_state=42
     )
     
-    classifier_config = {
-        'num_layers': 2,
-        'activation': 'relu',
-        'regularization': 'dropout',
-        'dropout_rate': config.hidden_dropout,
-        'cls_pooling': True
-    }
-    
+    # Create datasets and dataloaders
     tokenizer = BertTokenizer.from_pretrained(config.bert_model_name, clean_up_tokenization_spaces=True)
     train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
     val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
@@ -132,21 +149,40 @@ def main() -> None:
     train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size)
     
-    model = BERTClassifier(
-        bert_model_name=config.bert_model_name,
-        num_classes=config.num_classes,
-        classifier_config=classifier_config
-    )
-    trainer = Trainer(model, config)
+    if args.load_model:
+        # Load pre-trained model
+        model = load_best_model(args.load_model, config)
+        if args.evaluate:
+            trainer = Trainer(model, config)
+            accuracy, report = trainer.evaluate(val_dataloader)
+            logger.info("\nEvaluation Results:")
+            logger.info(f"Accuracy: {accuracy:.4f}")
+            logger.info(f"Classification Report:\n{report}")
+            return
+    else:
+        # Train new model
+        classifier_config = {
+            'num_layers': 2,
+            'activation': 'relu',
+            'regularization': 'dropout',
+            'dropout_rate': config.hidden_dropout,
+            'cls_pooling': True
+        }
+        model = BERTClassifier(
+            bert_model_name=config.bert_model_name,
+            num_classes=config.num_classes,
+            classifier_config=classifier_config
+        )
+        trainer = Trainer(model, config)
     
-    optimizer = AdamW(model.parameters(), lr=config.learning_rate)
-    total_steps = len(train_dataloader) * config.num_epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+        optimizer = AdamW(model.parameters(), lr=config.learning_rate)
+        total_steps = len(train_dataloader) * config.num_epochs
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
     
-    train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, config, trainer)
+        train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, config, trainer)
     
-    torch.save(model.state_dict(), config.model_save_path)
-    logger.info(f"Model saved to {config.model_save_path}")
+        torch.save(model.state_dict(), config.model_save_path)
+        logger.info(f"Model saved to {config.model_save_path}")
 
 if __name__ == "__main__":
     main()

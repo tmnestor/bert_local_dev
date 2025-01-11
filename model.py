@@ -12,6 +12,13 @@ class BERTClassifier(nn.Module):
         super().__init__()
         self._validate_config(classifier_config)
         self.classifier_config: Dict[str, Any] = classifier_config
+        
+        # Log model creation
+        logger.info("\nCreating BERT Classifier")
+        logger.info("Configuration:")
+        for key, value in classifier_config.items():
+            logger.info(f"  {key}: {value}")
+        
         self.bert: BertModel = BertModel.from_pretrained(bert_model_name)
         
         # Freeze BERT's weights
@@ -23,12 +30,16 @@ class BERTClassifier(nn.Module):
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
         """Validate classifier configuration."""
-        required_keys = ['num_layers', 'activation', 'regularization', 'dropout_rate', 'cls_pooling']
+        required_keys = ['num_layers', 'hidden_dim', 'activation', 'regularization', 'dropout_rate', 'cls_pooling']
         if not all(key in config for key in required_keys):
             raise ValueError(f"Missing required keys in classifier_config. Required: {required_keys}")
         
         if not isinstance(config['num_layers'], int) or config['num_layers'] < 1:
             raise ValueError("num_layers must be a positive integer")
+        
+        # Add validation for hidden_dim
+        if not isinstance(config['hidden_dim'], int) or config['hidden_dim'] < 1:
+            raise ValueError("hidden_dim must be a positive integer")
         
         valid_activations = ['relu', 'leaky_relu', 'elu', 'gelu', 'selu']
         if config['activation'] not in valid_activations:
@@ -45,24 +56,48 @@ class BERTClassifier(nn.Module):
             raise ValueError("cls_pooling must be a boolean")
 
     def _build_classifier(self, input_size: int, num_classes: int, config: Dict[str, Any]) -> nn.Sequential:
+        layer_sizes = self._calculate_layer_sizes(input_size, config['hidden_dim'], config['num_layers'], num_classes)
+        
+        logger.info("\nClassifier architecture:")
+        logger.info(f"Input size: {layer_sizes[0]}")
+        
         layers = []
-        current_size = input_size
-        
-        logger.info(f"\nClassifier architecture:")
-        logger.info(f"Input size: {current_size}")
-        
-        for i in range(config['num_layers']):
-            next_size = current_size // 2
-            logger.info(f"Layer {i+1}: {current_size} -> {next_size}")
-            layers.append(nn.Linear(current_size, next_size))
-            layers.append(self._get_activation(config['activation']))
-            layers.append(self._get_regularization(config['regularization'], config['dropout_rate'], next_size))
-            current_size = next_size
-        
-        logger.info(f"Output layer: {current_size} -> {num_classes}")
-        layers.append(nn.Linear(current_size, num_classes))
+        for i in range(len(layer_sizes) - 1):
+            current_size = layer_sizes[i]
+            next_size = layer_sizes[i + 1]
+            
+            if i < len(layer_sizes) - 2:  # Not the output layer
+                logger.info(f"Layer {i+1}: {current_size} -> {next_size}")
+                layers.append(nn.Linear(current_size, next_size))
+                layers.append(self._get_activation(config['activation']))
+                layers.append(self._get_regularization(config['regularization'], config['dropout_rate'], next_size))
+            else:  # Output layer
+                logger.info(f"Output layer: {current_size} -> {next_size}")
+                layers.append(nn.Linear(current_size, next_size))
         
         return nn.Sequential(*layers)
+
+    def _calculate_layer_sizes(self, input_size: int, hidden_dim: int, num_layers: int, num_classes: int) -> List[int]:
+        """Calculate the sizes for each layer using hidden_dim."""
+        if num_layers == 1:
+            return [input_size, num_classes]
+        
+        # For multiple layers, create a smooth progression from input_size to hidden_dim
+        layer_sizes = [input_size]
+        if num_layers > 2:
+            # Calculate intermediate layer sizes
+            for i in range(num_layers - 1):
+                next_size = max(
+                    hidden_dim,
+                    input_size // (2 ** (i + 1))  # Ensure size doesn't go below hidden_dim
+                )
+                layer_sizes.append(next_size)
+        else:
+            # For 2 layers, just use the hidden_dim
+            layer_sizes.append(hidden_dim)
+            
+        layer_sizes.append(num_classes)
+        return layer_sizes
 
     def _get_activation(self, activation: str) -> nn.Module:
         activation_map = {

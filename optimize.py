@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List, Tuple, Optional, Any
 import optuna
 import torch
@@ -23,6 +24,7 @@ from model import BERTClassifier
 from dataset import TextClassificationDataset
 from trainer import Trainer
 import yaml  # Add this import at the top
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,24 @@ def create_study(study_name: str, storage: Optional[str] = None) -> optuna.Study
         load_if_exists=True
     )
 
+def save_model_checkpoint(model: BERTClassifier, trial_number: int, accuracy: float, study_name: str) -> None:
+    """Save model checkpoint with trial information."""
+    checkpoint_path = f'model_checkpoint_{study_name}_trial_{trial_number}.pt'
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'trial_number': trial_number,
+        'accuracy': accuracy,
+        'config': model.classifier_config
+    }, checkpoint_path)
+    logger.info(f"Saved model checkpoint: {checkpoint_path}")
+
 def objective(
     trial: optuna.Trial,
     config: ModelConfig,
     texts: List[str],
     labels: List[int],
+    study_name: str,
+    best_model_info: Dict[str, Any],  # Add dictionary to track best model
     trial_pbar: Optional[tqdm] = None,
     epoch_pbar: Optional[tqdm] = None
 ) -> float:
@@ -112,25 +127,11 @@ def objective(
     total_steps = len(train_dataloader) * config.num_epochs
     classifier_config['warmup_steps'] = int(total_steps * classifier_config['warmup_ratio'])
     
-    # Calculate layer sizes
-    initial_size = BertModel.from_pretrained(config.bert_model_name).config.hidden_size
-    current_size = initial_size
-    layer_sizes = [initial_size]
-    
-    for _ in range(classifier_config['num_layers']):
-        current_size = current_size // 2
-        layer_sizes.append(current_size)
-    
     logger.info(f"Trial #{trial.number} hyperparameters:")
     for key, value in classifier_config.items():
         logger.info(f"  {key}: {value}")
     
-    logger.info("Layer architecture:")
-    for i, size in enumerate(layer_sizes[:-1]):
-        logger.info(f"  Layer {i}: {size} -> {layer_sizes[i+1]}")
-    logger.info(f"  Output: {layer_sizes[-1]} -> {config.num_classes}")
-    
-    # Create model and setup training
+    # Create model and setup training (model will log its own architecture)
     model = BERTClassifier(config.bert_model_name, config.num_classes, classifier_config)
     trainer = Trainer(model, config)
     
@@ -174,10 +175,33 @@ def objective(
         
         trial.report(accuracy, epoch)
         
+        # Save model if it's the best so far
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            no_improve_count = 0
+            # Update best model info atomically
+            best_model_info.update({
+                'model_state': model.state_dict(),
+                'config': classifier_config.copy(),
+                'accuracy': accuracy,
+                'trial_number': trial.number,
+                'params': trial.params
+            })
+        else:
+            no_improve_count += 1
+        
         # Handle early stopping
         if accuracy > best_accuracy:
             best_accuracy = accuracy
             no_improve_count = 0
+            # Update best model info atomically
+            best_model_info.update({
+                'model_state': model.state_dict(),
+                'config': classifier_config.copy(),
+                'accuracy': accuracy,
+                'trial_number': trial.number,
+                'params': trial.params
+            })
         else:
             no_improve_count += 1
         
@@ -204,6 +228,50 @@ def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm
     trial_pbar = tqdm(total=n_trials, desc='Trials', position=0)
     epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=True)
     return trial_pbar, epoch_pbar
+
+def load_previous_best_trial(study_name: str) -> Optional[Dict[str, Any]]:
+    """Load the previous best trial if it exists."""
+    best_model_path = f'best_model_{study_name}.pt'
+    if os.path.exists(best_model_path):
+        try:
+            checkpoint = torch.load(best_model_path)
+            return {
+                'accuracy': checkpoint['accuracy'],
+                'trial_number': checkpoint['trial_number'],
+                'model_state': checkpoint['model_state_dict'],
+                'config': checkpoint['config'],
+                'params': checkpoint['hyperparameters']
+            }
+        except Exception as e:
+            logger.warning(f"Error loading previous best trial: {e}")
+    return None
+
+def save_best_trial(best_model_info: Dict[str, Any], study_name: str) -> None:
+    """Save the current best trial, comparing with previous best if it exists."""
+    final_model_path = f'best_model_{study_name}.pt'
+    previous_best = load_previous_best_trial(study_name)
+    
+    if previous_best is not None:
+        if previous_best['accuracy'] >= best_model_info['accuracy']:
+            logger.info("Previous best trial has better or equal performance. Keeping previous model.")
+            logger.info(f"Previous best accuracy: {previous_best['accuracy']:.4f}")
+            logger.info(f"Current best accuracy: {best_model_info['accuracy']:.4f}")
+            return
+
+    # Save new best model
+    torch.save({
+        'model_state_dict': best_model_info['model_state'],
+        'config': best_model_info['config'],
+        'trial_number': best_model_info['trial_number'],
+        'accuracy': best_model_info['accuracy'],
+        'study_name': study_name,
+        'hyperparameters': best_model_info['params'],
+        'timestamp': datetime.now().isoformat()
+    }, final_model_path)
+    
+    logger.info(f"Saved new best model to {final_model_path}")
+    logger.info(f"New best trial number: {best_model_info['trial_number']}")
+    logger.info(f"New best accuracy: {best_model_info['accuracy']:.4f}")
 
 def run_optimization(config: ModelConfig, timeout: Optional[int] = None, 
                     study_name: str = 'bert_optimization',
@@ -248,18 +316,23 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
                 'value': trial.value
             }, f'best_trial_{study_name}.pt')
     
+    # Dictionary to track best model info
+    best_model_info = {}
+    
     # Run optimization with progress bars
     objective_with_progress = partial(objective, 
                                     config=config, 
                                     texts=texts, 
                                     labels=labels,
+                                    study_name=study_name,
+                                    best_model_info=best_model_info,  # Pass best_model_info
                                     trial_pbar=trial_pbar,
                                     epoch_pbar=epoch_pbar)
     
     try:
         study.optimize(
             objective_with_progress,
-            n_trials=config.n_trials,  # Use config.n_trials instead of undefined n_trials
+            n_trials=config.n_trials,
             timeout=timeout,
             callbacks=[callback],
             gc_after_trial=True  # Add garbage collection
@@ -269,23 +342,37 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
         trial_pbar.close()
         epoch_pbar.close()
         
+        # Save the best model if we found one
+        if best_model_info:
+            save_best_trial(best_model_info, study_name)
+        
         # Plot optimization results
         try:
             from optuna.visualization import plot_optimization_history, plot_parallel_coordinate
             import plotly
             
-            figs = {
-                'optimization_history': plot_optimization_history(study),
-                'parallel_coordinate': plot_parallel_coordinate(study),
-                'param_importances': optuna.visualization.plot_param_importances(study),
-                'slice_plot': optuna.visualization.plot_slice(study)
-            }
+            # Create visualizations based on number of completed trials
+            figs = {}
+            n_completed_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+            
+            # Always create optimization history plot
+            figs['optimization_history'] = plot_optimization_history(study)
+            
+            # Only create these plots if we have more than one completed trial
+            if n_completed_trials > 1:
+                figs['parallel_coordinate'] = plot_parallel_coordinate(study)
+                figs['param_importances'] = optuna.visualization.plot_param_importances(study)
+                figs['slice_plot'] = optuna.visualization.plot_slice(study)
+            else:
+                logger.warning("Some visualizations skipped: need more than one completed trial")
             
             for name, fig in figs.items():
                 fig.write_html(f"{name}_{study_name}.html")
                 
         except ImportError:
             logger.warning("Plotly not installed. Skipping visualization.")
+        except Exception as e:
+            logger.warning(f"Error creating visualizations: {str(e)}")
             
         # Save study statistics in YAML instead of JSON
         study_stats = {
