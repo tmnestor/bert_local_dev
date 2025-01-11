@@ -27,6 +27,8 @@ dependencies:
   # - jupyter-ai
   # - spacy
   - optuna
+  - pyyaml
+  - plotly
   - pip
   - pip:
     # - tensorflow-macos>=2.11

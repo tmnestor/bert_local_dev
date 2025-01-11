@@ -61,19 +61,14 @@ def objective(
     logger.info(f"\nStarting trial #{trial.number}")
     logger.info("Sampling hyperparameters...")
     
-    # Calculate layer sizes
-    initial_size = BertModel.from_pretrained(config.bert_model_name).config.hidden_size
-    current_size = initial_size
-    layer_sizes = [initial_size]
-    
-    num_layers = trial.suggest_int('num_layers', 1, 4)
-    for _ in range(num_layers):
-        current_size = current_size // 2
-        layer_sizes.append(current_size)
+    # First, split the data and create dataloaders with the base batch size
+    train_texts, val_texts, train_labels, val_labels = train_test_split(
+        texts, labels, test_size=0.2, random_state=42
+    )
     
     # Define hyperparameters to optimize
     classifier_config = {
-        'num_layers': trial.suggest_int('num_layers', 1, 6),
+        'num_layers': trial.suggest_int('num_layers', 1, 4),
         'hidden_dim': trial.suggest_int('hidden_dim', 64, 1024, log=True),
         'learning_rate': trial.suggest_float('learning_rate', 1e-6, 1e-3, log=True),
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
@@ -82,16 +77,33 @@ def objective(
         'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
-        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
+        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])
     }
-
-    # Dynamic warmup steps based on ratio
-    total_steps = len(train_dataloader) * config.num_epochs
-    classifier_config['warmup_steps'] = int(total_steps * classifier_config['warmup_ratio'])
 
     # Update config with trial-specific parameters
     config.learning_rate = classifier_config['learning_rate']
     config.batch_size = classifier_config['batch_size']
+    
+    # Create datasets and dataloaders with the trial's batch size
+    tokenizer = BertTokenizer.from_pretrained(config.bert_model_name, clean_up_tokenization_spaces=True)
+    train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
+    val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
+    
+    train_dataloader = DataLoader(train_dataset, batch_size=classifier_config['batch_size'], shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=classifier_config['batch_size'])
+    
+    # Calculate total steps and warmup steps after dataloader creation
+    total_steps = len(train_dataloader) * config.num_epochs
+    classifier_config['warmup_steps'] = int(total_steps * classifier_config['warmup_ratio'])
+    
+    # Calculate layer sizes
+    initial_size = BertModel.from_pretrained(config.bert_model_name).config.hidden_size
+    current_size = initial_size
+    layer_sizes = [initial_size]
+    
+    for _ in range(classifier_config['num_layers']):
+        current_size = current_size // 2
+        layer_sizes.append(current_size)
     
     logger.info(f"Trial #{trial.number} hyperparameters:")
     for key, value in classifier_config.items():
@@ -102,30 +114,16 @@ def objective(
         logger.info(f"  Layer {i}: {size} -> {layer_sizes[i+1]}")
     logger.info(f"  Output: {layer_sizes[-1]} -> {config.num_classes}")
     
-    # Split data
-    train_texts, val_texts, train_labels, val_labels = train_test_split(
-        texts, labels, test_size=0.2, random_state=42
-    )
-    
-    # Create datasets and dataloaders
-    tokenizer = BertTokenizer.from_pretrained(config.bert_model_name, clean_up_tokenization_spaces=True)
-    train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
-    val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
-    
-    train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size)
-    
-    # Create model with trial hyperparameters
+    # Create model and setup training
     model = BERTClassifier(config.bert_model_name, config.num_classes, classifier_config)
     trainer = Trainer(model, config)
     
-    # Training setup
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=classifier_config['learning_rate'],
         weight_decay=classifier_config['weight_decay']
     )
-    total_steps = len(train_dataloader) * config.num_epochs
+    
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=classifier_config['warmup_steps'],
