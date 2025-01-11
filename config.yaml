@@ -1,0 +1,232 @@
+.defaults:
+  enabled: true
+  track: true
+.dimensions:
+  input_size: 7
+  num_classes: 5
+.intervals:
+  plot_interval: 5
+  save_interval: 10
+.monitoring_base:
+  enabled: true
+  log_dir: monitoring
+  log_file: performance.log
+.monitoring_settings:
+  enabled: true
+  track: true
+  track_throughput: true
+  track_time: true
+.optimizer:
+  name: Adam
+  params: &id001
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-08
+    lr: 0.001
+    weight_decay: 0.0
+.paths:
+  test_path: data/test.csv
+  train_path: data/train.csv
+  val_path: data/val.csv
+.plotting_settings:
+  enabled: true
+  plot_interval: 5
+  save_best: true
+  save_interval: 10
+.training:
+  batch_size: 32
+  device: cpu
+  epochs: 100
+  metric: f1
+  seed: 42
+best_model:
+  activation: gelu
+  architecture:
+    activation: gelu
+    architecture: resnet_mlp
+    batch_norm: true
+    hidden_size: 128
+    input_size: 7
+    layers:
+    - activation: gelu
+      in_features: 7
+      out_features: 128
+      residual: false
+      type: linear
+    - num_features: 128
+      type: batch_norm
+    - activation: gelu
+      in_features: 128
+      out_features: 128
+      residual: true
+      type: linear
+    - num_features: 128
+      type: batch_norm
+    - in_features: 128
+      out_features: 5
+      residual: false
+      type: linear
+    n_layers: 3
+    num_classes: 5
+  best_metric_name: f1
+  best_metric_value: 0.3058226311337905
+  dropout_rate: 0.0
+  hidden_layers:
+  - 64
+  - 64
+  - 64
+  - 64
+  - 64
+  - 64
+  - 64
+  hidden_size: 64
+  hyperparameters: null
+  learning_rate: 8.294272156204628e-05
+  metric_name: null
+  metric_value: null
+  n_layers: 7
+  use_batch_norm: true
+  weight_decay: 1.0943191663272294e-05
+data:
+  target_column: target
+  test_path: data/test.csv
+  train_path: data/train.csv
+  val_path: data/val.csv
+dataloader:
+  drop_last: true
+  num_workers: auto
+  persistent_workers: true
+  pin_memory: false
+  prefetch_factor: 2
+device: cpu
+early_stopping:
+  min_delta: 0.001
+  patience: 5
+logging:
+  directory: logs
+  filename: training.log
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+model:
+  architecture_yaml: models/configs/resnet_mlp.yaml
+  input_size: 7
+  num_classes: 5
+  save_path: models/best_model.pt
+  type: resnet_mlp
+monitoring:
+  checkpoints:
+    enabled: true
+    filename: model_checkpoint.pt
+    plot_interval: 5
+    save_best: true
+    save_interval: 10
+  enabled: true
+  log_dir: monitoring
+  log_file: performance.log
+  memory:
+    enabled: true
+    include_gpu: true
+    track: true
+    track_throughput: true
+    track_time: true
+  metrics:
+    enabled: true
+    output_file: metrics.yaml
+    plot_interval: 5
+    save_best: true
+    save_interval: 10
+  performance:
+    enabled: true
+    track: true
+    track_throughput: true
+    track_time: true
+optimization:
+  memory:
+    gradient_accumulation_steps: 16
+seed: 42
+techniques:
+  scheduler:
+    params:
+      div_factor: 25.0
+      final_div_factor: 1e4
+      max_lr_factor: 10.0
+      pct_start: 0.3
+    type: OneCycleLR
+  swa:
+    enabled: true
+    lr: 0.001
+    start_epoch: 75
+    track: true
+  warmup:
+    enabled: true
+    initial_lr_factor: 0.01
+    max_steps: 1000
+    track: true
+training:
+  batch_size: 32
+  cpu_optimization:
+    enable_mkldnn: true
+    num_threads: auto
+    use_bfloat16: false
+  cross_validation:
+    max_epochs: 20
+    n_splits: 7
+  device: cpu
+  epochs: 100
+  loss:
+    label_smoothing:
+      enabled: false
+      factor: 0.1
+    name: CrossEntropyLoss
+  metric: f1
+  optimizer:
+    name: Adam
+    params: *id001
+  seed: 42
+tuning:
+  advanced_pruning:
+    enabled: true
+    interval_steps: 2
+    max_resource: 100
+    min_resource: 1
+    n_warmup_steps: 5
+    percentile: 25.0
+    pruning_type: median
+    reduction_factor: 3
+    threshold: 0.1
+  n_trials: 20
+  parameter_ranges:
+    complex_mlp:
+      hidden_size:
+      - 128
+      - 1024
+      layer_shrinkage:
+      - 0.3
+      - 0.8
+      lr:
+      - 1e-5
+      - 1e-2
+      n_layers:
+      - 3
+      - 9
+    resnet_mlp:
+      dropout_rate:
+      - 0.1
+      - 0.5
+      hidden_size:
+      - 64
+      - 512
+      lr:
+      - 1e-5
+      - 1e-2
+      n_layers:
+      - 2
+      - 8
+  pruning:
+    min_trials_complete: 5
+    warm_up_epochs: 2
+  stability_checks:
+    cv_threshold: 0.1
+    min_performance: 0.2
+    required_improvement: 0.05
