@@ -28,14 +28,39 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-def create_study(study_name: str, storage: Optional[str] = None) -> optuna.Study:
-    """Create an Optuna study with enhanced sampling and pruning"""
-    sampler = TPESampler(
-        n_startup_trials=10,  # More startup trials for better exploration
-        n_ei_candidates=24,   # More candidates for expected improvement
-        multivariate=True,    # Consider parameter relationships
-        seed=42
-    )
+def create_study(study_name: str, storage: Optional[str] = None, 
+                sampler_type: str = 'tpe') -> optuna.Study:
+    """Create an Optuna study with enhanced sampling and pruning
+    
+    Available samplers:
+    - 'tpe': Tree-structured Parzen Estimators (default)
+    - 'random': Random sampling
+    - 'cmaes': Covariance Matrix Adaptation Evolution Strategy
+    - 'qmc': Quasi Monte Carlo
+    - 'grid': Grid sampling
+    """
+    sampler = {
+        'tpe': TPESampler(
+            n_startup_trials=10,
+            n_ei_candidates=24,
+            multivariate=True,
+            seed=42
+        ),
+        'random': optuna.samplers.RandomSampler(seed=42),
+        'cmaes': optuna.samplers.CmaEsSampler(
+            n_startup_trials=10,
+            seed=42
+        ),
+        'qmc': optuna.samplers.QMCSampler(
+            qmc_type='sobol',
+            seed=42
+        ),
+        'grid': optuna.samplers.GridSampler({
+            'learning_rate': [1e-5, 5e-5, 1e-4],
+            'batch_size': [16, 32, 64],
+            'num_layers': [1, 2, 3]
+        })
+    }.get(sampler_type, TPESampler(seed=42))
 
     pruner = HyperbandPruner(
         min_resource=1,
@@ -227,19 +252,30 @@ def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm
 def load_previous_best_trial(study_name: str, config: ModelConfig) -> Optional[Dict[str, Any]]:
     """Load the previous best trial if it exists."""
     best_model_path = config.best_trials_dir / f'best_model_{study_name}.pt'
-    if os.path.exists(best_model_path):
-        try:
-            checkpoint = torch.load(best_model_path)
-            return {
-                'accuracy': checkpoint['accuracy'],
-                'trial_number': checkpoint['trial_number'],
-                'model_state': checkpoint['model_state_dict'],
-                'config': checkpoint['config'],
-                'params': checkpoint['hyperparameters']
-            }
-        except Exception as e:
-            logger.warning(f"Error loading previous best trial: {e}")
-    return None
+    
+    # Ensure directory exists
+    config.best_trials_dir.mkdir(parents=True, exist_ok=True)
+    
+    if not os.path.exists(best_model_path):
+        logger.info(f"No previous best trial found at: {best_model_path}")
+        return None
+        
+    try:
+        checkpoint = torch.load(best_model_path, map_location='cpu')
+        return {
+            'accuracy': checkpoint['accuracy'],
+            'trial_number': checkpoint['trial_number'],
+            'model_state': checkpoint['model_state_dict'],
+            'config': checkpoint['config'],
+            'params': checkpoint['hyperparameters']
+        }
+    except Exception as e:
+        logger.warning(f"Error loading previous best trial from {best_model_path}: {str(e)}")
+        if os.path.exists(best_model_path):
+            corrupt_path = best_model_path.with_suffix('.corrupt')
+            os.rename(best_model_path, corrupt_path)
+            logger.warning(f"Renamed corrupt model file to: {corrupt_path}")
+        return None
 
 def save_best_trial(best_model_info: Dict[str, Any], study_name: str, config: ModelConfig) -> None:
     """Save the current best trial, comparing with previous best if it exists."""
@@ -311,9 +347,9 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     logger.info("\nInitializing progress bars...")
     trial_pbar, epoch_pbar = initialize_progress_bars(config.n_trials, config.num_epochs)
     
-    # Create study
-    logger.info("\nCreating Optuna study...")
-    study = create_study(study_name, storage)
+    # Create study with sampler from config
+    logger.info(f"Creating study with {config.sampler} sampler...")
+    study = create_study(study_name, storage, config.sampler)
     
     # Add callbacks for better analysis
     study.set_user_attr("best_value", 0.0)
@@ -452,7 +488,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
-    # Add all configuration options
+    # Add all configuration options (including sampler)
     ModelConfig.add_argparse_args(parser)
     
     # Add optimization-specific arguments
@@ -463,6 +499,7 @@ def parse_args() -> argparse.Namespace:
                       help='Name for the Optuna study')
     optim.add_argument('--storage', type=str, default=None,
                       help='Database URL for Optuna storage')
+    # Remove duplicate sampler argument since it's now in ModelConfig
     
     args = parser.parse_args()
     

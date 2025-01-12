@@ -1,0 +1,18 @@
+best_trial: 20
+best_value: 0.9685393258426966
+best_params:
+  architecture_type: standard
+  learning_rate: 4.8696752516586326e-05
+  weight_decay: 3.9241897584845336e-05
+  batch_size: 16
+  num_layers: 2
+  hidden_dim: 1024
+  activation: gelu
+  regularization: batchnorm
+  dropout_rate: 0.2893887083122263
+  cls_pooling: false
+  init_scale: 0.025032529370778874
+  warmup_ratio: 0.08125
+n_trials: 80
+n_complete: 12
+n_pruned: 68

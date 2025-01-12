@@ -14,10 +14,11 @@ class ModelConfig:
     learning_rate: float = 2e-5
     device: str = "cpu"
     data_file: Path = Path("data/bbc-text.csv")
-    model_save_path: Path = Path("best_trials/bert_classifier.pth")
-    best_trials_dir: Path = Path("best_trials")  # Add this line
+    best_trials_dir: Path = Path("best_trials")  # Base directory
+    model_save_path: Path = Path("best_trials/bert_classifier.pth")  # Final model path
     hidden_dropout: float = 0.1
     n_trials: int = 100
+    sampler: str = 'tpe'  # Add sampler attribute with default value
 
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -48,6 +49,9 @@ class ModelConfig:
                           choices=['cpu', 'cuda'], help='Device to use for training')
         system.add_argument('--n_trials', type=int, default=cls.n_trials,
                           help='Number of optimization trials')
+        system.add_argument('--sampler', type=str, default=cls.sampler,
+                          choices=['tpe', 'random', 'cmaes', 'qmc', 'grid'],  # Remove 'nsgaii', 'motpe'
+                          help='Optuna sampler to use')
 
         # File paths
         paths = parser.add_argument_group('File Paths')
@@ -70,6 +74,13 @@ class ModelConfig:
 
     def validate(self) -> None:
         """Validate configuration parameters."""
+        # Create best_trials_dir if it doesn't exist
+        self.best_trials_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create parent directory for model_save_path if it doesn't exist
+        self.model_save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Existing validations
         if self.num_classes < 1:
             raise ValueError("num_classes must be positive")
         if self.max_length < 1:
