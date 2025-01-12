@@ -6,7 +6,7 @@ import argparse
 
 @dataclass
 class ModelConfig:
-    bert_model_name: str = 'sentence-transformers/all-MiniLM-L6-v2'
+    bert_model_name: str = './all-MiniLM-L6-v2'
     num_classes: int = 5
     max_length: int = 128
     batch_size: int = 16
@@ -14,7 +14,7 @@ class ModelConfig:
     learning_rate: float = 2e-5
     device: str = "cpu"
     data_file: Path = Path("data/bbc-text.csv")
-    model_save_path: Path = Path("bert_classifier.pth")
+    model_save_path: Path = Path("best_trials/bert_classifier.pth")
     best_trials_dir: Path = Path("best_trials")  # Add this line
     hidden_dropout: float = 0.1
     n_trials: int = 100
