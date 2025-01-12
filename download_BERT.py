@@ -1,15 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# ### Download pretrained LLM from [Index of /reimers/sentence-transformers/v0.2/](https://public.ukp.informatik.tu-darmstadt.de/reimers/sentence-transformers/v0.2/)
+### Download pretrained LLM from [Index of /reimers/sentence-transformers/v0.2/](https://public.ukp.informatik.tu-darmstadt.de/reimers/sentence-transformers/v0.2/)
 
-# In[3]:
-
-
-# %%bash
 # download_url="https://public.ukp.informatik.tu-darmstadt.de/reimers/sentence-transformers/v0.2/average_word_embeddings_glove.6B.300d.zip"
-# destination_path="/home/jovyan/work/glove"
-# zip_filename="average_word_embeddings_glove.6B.300d.zip"
+# download_url="https://public.ukp.informatik.tu-darmstadt.de/reimers/sentence-transformers/v0.2/all-MiniLM-L6-v2.zip"
+
+# destination_path="all-MiniLM-L6-v2"
+# zip_filename="all-MiniLM-L6-v2.zip"
 
 # # Create the destination directory if it does not exist
 # mkdir -p "$destination_path"
@@ -34,10 +32,6 @@
 # else
 #     echo "Download failed."
 # fi
-
-
-# In[10]:
-
 
 import os
 import subprocess
@@ -73,9 +67,6 @@ else:
     print("Download failed.")
 
 
-# In[1]:
-
-
 # import os
 # default is in ~/.cache
 # os.environ['HF_HOME'] = '/home/jovyan/cache/'
@@ -84,15 +75,9 @@ else:
 
 # ### reload from cache snapshot (need to locate the config.json location)
 
-# In[ ]:
-
-
 # MODEL='thenlper/gte-small'
 # MODEL='/home/jovyan/cache/hub/models--thenlper--gte-small/snapshots/17e1f347d17fe144873b1201da91788898c639cd'
 # gte_model = SentenceTransformer(MODEL)
-
-
-# In[11]:
 
 
 from sentence_transformers import SentenceTransformer, LoggingHandler
@@ -100,23 +85,13 @@ from sentence_transformers import models, util, datasets, evaluation, losses
 from torch.utils.data import DataLoader
 
 
-# In[14]:
-
-
 # MODEL='thenlper/gte-small'
 MODEL = 'all-MiniLM-L6-v2'
 model = SentenceTransformer(MODEL)
 model
 
-
-# In[ ]:
-
-
 # model = SentenceTransformer('all-MiniLM-L6-v2')
 # model
-
-
-# In[ ]:
 
 
 # MODEL = 'all-mpneimport os
@@ -159,9 +134,6 @@ model.save(r'../gte-small')
 
 # ### Using Transformers Library
 
-# In[ ]:
-
-
 from transformers import AutoTokenizer, AutoModel
 import torch
 import torch.nn.functional as F
@@ -192,10 +164,6 @@ sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
 print(f"{sentence_embeddings.shape=}")
 print("Sentence embeddings:")
 print(sentence_embeddings)
-
-
-# In[ ]:
-
 
 
 

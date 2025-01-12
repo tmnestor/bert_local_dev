@@ -66,3 +66,7 @@ env/
 # IDE specific files
 .vscode/
 .idea/
+
+# BERT MODELS
+
+all-MiniLM-L6-v2
