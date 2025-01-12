@@ -81,36 +81,29 @@ def objective(
         texts, labels, test_size=0.2, random_state=42
     )
     
-    # Define hyperparameters to optimize
+    # Define hyperparameters with discrete hidden_dim values
     classifier_config = {
         'num_layers': trial.suggest_int('num_layers', 1, 4),
-        'hidden_dim': trial.suggest_int('hidden_dim', 64, 1024, log=True),
-        'learning_rate': trial.suggest_float('learning_rate', 1e-6, 1e-3, log=True),
+        'hidden_dim': trial.suggest_categorical('hidden_dim', [32, 64, 128, 256, 512, 1024]),  # Use discrete values
+        'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True),
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128]),
+        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64]),  # More focused batch sizes
         'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
-        'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
+        'activation': trial.suggest_categorical('activation', ['gelu', 'relu']),
         'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
         'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
         'init_scale': trial.suggest_float('init_scale', 0.01, 0.1, log=True)
     }
 
-    # Parameter constraints
-    if classifier_config['hidden_dim'] < 256:
+    # Parameter constraints and relationships
+    if classifier_config['num_layers'] == 1:
+        # For single layer, use larger hidden dim
+        classifier_config['hidden_dim'] = max(classifier_config['hidden_dim'], 256)
+    elif classifier_config['hidden_dim'] < 256:
         # Smaller networks might need higher learning rates
         classifier_config['learning_rate'] = max(classifier_config['learning_rate'], 1e-4)
     
-    classifier_config.update({
-        'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128]),
-        'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
-        'activation': trial.suggest_categorical('activation', ['relu', 'gelu']),
-        'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
-        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
-        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])
-    })
-
     # Update config with trial-specific parameters
     config.learning_rate = classifier_config['learning_rate']
     config.batch_size = classifier_config['batch_size']
@@ -273,6 +266,22 @@ def save_best_trial(best_model_info: Dict[str, Any], study_name: str) -> None:
     logger.info(f"New best trial number: {best_model_info['trial_number']}")
     logger.info(f"New best accuracy: {best_model_info['accuracy']:.4f}")
 
+def get_best_trial_ever(study_name: str) -> Optional[Dict[str, Any]]:
+    """Get the best trial from all previous experiments."""
+    best_model_path = f'best_model_{study_name}.pt'
+    if os.path.exists(best_model_path):
+        try:
+            checkpoint = torch.load(best_model_path)
+            return {
+                'accuracy': checkpoint['accuracy'],
+                'trial_number': checkpoint['trial_number'],
+                'params': checkpoint['hyperparameters'],
+                'timestamp': checkpoint.get('timestamp', 'unknown')
+            }
+        except Exception as e:
+            logger.warning(f"Error loading previous best trial: {e}")
+    return None
+
 def run_optimization(config: ModelConfig, timeout: Optional[int] = None, 
                     study_name: str = 'bert_optimization',
                     storage: Optional[str] = None) -> Dict[str, Any]:
@@ -351,54 +360,83 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
             from optuna.visualization import plot_optimization_history, plot_parallel_coordinate
             import plotly
             
-            # Create visualizations based on number of completed trials
-            figs = {}
             n_completed_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
             
-            # Always create optimization history plot
-            figs['optimization_history'] = plot_optimization_history(study)
-            
-            # Only create these plots if we have more than one completed trial
-            if n_completed_trials > 1:
-                figs['parallel_coordinate'] = plot_parallel_coordinate(study)
-                figs['param_importances'] = optuna.visualization.plot_param_importances(study)
-                figs['slice_plot'] = optuna.visualization.plot_slice(study)
+            if n_completed_trials > 0:
+                # Create visualizations based on number of completed trials
+                figs = {}
+                
+                # Always create optimization history plot if we have at least one trial
+                figs['optimization_history'] = plot_optimization_history(study)
+                
+                # Only create these plots if we have more than one completed trial
+                if n_completed_trials > 1:
+                    figs['parallel_coordinate'] = plot_parallel_coordinate(study)
+                    figs['param_importances'] = optuna.visualization.plot_param_importances(study)
+                    figs['slice_plot'] = optuna.visualization.plot_slice(study)
+                
+                for name, fig in figs.items():
+                    fig.write_html(f"{name}_{study_name}.html")
             else:
-                logger.warning("Some visualizations skipped: need more than one completed trial")
-            
-            for name, fig in figs.items():
-                fig.write_html(f"{name}_{study_name}.html")
+                logger.warning("No trials completed. Skipping visualizations.")
                 
         except ImportError:
             logger.warning("Plotly not installed. Skipping visualization.")
         except Exception as e:
             logger.warning(f"Error creating visualizations: {str(e)}")
-            
-        # Save study statistics in YAML instead of JSON
-        study_stats = {
-            'best_trial': study.best_trial.number,
-            'best_value': float(study.best_trial.value),  # Convert numpy float to Python float
-            'best_params': dict(study.best_trial.params),  # Convert to regular dict
-            'n_trials': len(study.trials),
-            'n_complete': len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]),
-            'n_pruned': len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
-        }
         
-        # Save as YAML instead of JSON
-        with open(f'study_stats_{study_name}.yaml', 'w') as f:
-            yaml.safe_dump(study_stats, f, default_flow_style=False, sort_keys=False)
+        # Save study statistics in YAML
+        try:
+            if n_completed_trials > 0:
+                study_stats = {
+                    'best_trial': study.best_trial.number,
+                    'best_value': float(study.best_trial.value),
+                    'best_params': dict(study.best_trial.params),
+                    'n_trials': len(study.trials),
+                    'n_complete': n_completed_trials,
+                    'n_pruned': len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
+                }
+            else:
+                study_stats = {
+                    'n_trials': len(study.trials),
+                    'n_complete': 0,
+                    'n_pruned': len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]),
+                    'status': 'No trials completed'
+                }
+            
+            # Save as YAML
+            with open(f'study_stats_{study_name}.yaml', 'w') as f:
+                yaml.safe_dump(study_stats, f, default_flow_style=False, sort_keys=False)
+                
+        except Exception as e:
+            logger.error(f"Error saving study statistics: {str(e)}")
     
     logger.info("\n" + "="*50)
     logger.info("Optimization finished!")
-    logger.info("Best trial:")
-    trial = study.best_trial
     
-    logger.info(f"  Value: {trial.value:.4f}")
-    logger.info("  Params: ")
-    for key, value in trial.params.items():
-        logger.info(f"    {key}: {value}")
-    
-    return study.best_params
+    if n_completed_trials > 0:
+        logger.info("Best trial:")
+        trial = study.best_trial
+        logger.info(f"  Value: {trial.value:.4f}")
+        logger.info("  Params: ")
+        for key, value in trial.params.items():
+            logger.info(f"    {key}: {value}")
+        return study.best_trial.params
+    else:
+        logger.warning("No trials completed in current experiment.")
+        best_ever = get_best_trial_ever(study_name)
+        if best_ever:
+            logger.info("Returning best trial from previous experiments:")
+            logger.info(f"  Accuracy: {best_ever['accuracy']:.4f}")
+            logger.info(f"  Trial number: {best_ever['trial_number']}")
+            logger.info(f"  From experiment at: {best_ever['timestamp']}")
+            logger.info("  Parameters:")
+            for key, value in best_ever['params'].items():
+                logger.info(f"    {key}: {value}")
+            return best_ever['params']
+        else:
+            logger.warning("No successful trials found in any experiment.")
+            return {}
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(

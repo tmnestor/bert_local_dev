@@ -82,20 +82,22 @@ class BERTClassifier(nn.Module):
         if num_layers == 1:
             return [input_size, num_classes]
         
-        # For multiple layers, create a smooth progression from input_size to hidden_dim
+        # For multiple layers, create a smooth progression to hidden_dim
         layer_sizes = [input_size]
+        current_size = input_size
+        
         if num_layers > 2:
-            # Calculate intermediate layer sizes
-            for i in range(num_layers - 1):
-                next_size = max(
-                    hidden_dim,
-                    input_size // (2 ** (i + 1))  # Ensure size doesn't go below hidden_dim
-                )
-                layer_sizes.append(next_size)
+            # Calculate intermediate sizes with geometric progression
+            ratio = (hidden_dim / current_size) ** (1.0 / (num_layers - 1))
+            for _ in range(num_layers - 1):
+                current_size = int(current_size * ratio)
+                # Ensure we don't go below hidden_dim
+                current_size = max(current_size, hidden_dim)
+                layer_sizes.append(current_size)
         else:
-            # For 2 layers, just use the hidden_dim
+            # For 2 layers, use hidden_dim directly
             layer_sizes.append(hidden_dim)
-            
+        
         layer_sizes.append(num_classes)
         return layer_sizes
 
