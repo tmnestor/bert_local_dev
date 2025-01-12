@@ -52,9 +52,10 @@ def create_study(study_name: str, storage: Optional[str] = None) -> optuna.Study
         load_if_exists=True
     )
 
-def save_model_checkpoint(model: BERTClassifier, trial_number: int, accuracy: float, study_name: str) -> None:
+def save_model_checkpoint(model: BERTClassifier, trial_number: int, accuracy: float, study_name: str, config: ModelConfig) -> None:
     """Save model checkpoint with trial information."""
-    checkpoint_path = f'model_checkpoint_{study_name}_trial_{trial_number}.pt'
+    config.best_trials_dir.mkdir(exist_ok=True, parents=True)
+    checkpoint_path = config.best_trials_dir / f'model_checkpoint_{study_name}_trial_{trial_number}.pt'
     torch.save({
         'model_state_dict': model.state_dict(),
         'trial_number': trial_number,
@@ -73,36 +74,48 @@ def objective(
     trial_pbar: Optional[tqdm] = None,
     epoch_pbar: Optional[tqdm] = None
 ) -> float:
-    logger.info(f"\nStarting trial #{trial.number}")
-    logger.info("Sampling hyperparameters...")
-    
     # First, split the data and create dataloaders with the base batch size
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         texts, labels, test_size=0.2, random_state=42
     )
     
-    # Define hyperparameters with discrete hidden_dim values
+    # First suggest architecture type
+    arch_type = trial.suggest_categorical('architecture_type', ['standard', 'plane_resnet'])
+    
+    # Base configuration
     classifier_config = {
-        'num_layers': trial.suggest_int('num_layers', 1, 4),
-        'hidden_dim': trial.suggest_categorical('hidden_dim', [32, 64, 128, 256, 512, 1024]),  # Use discrete values
+        'architecture_type': arch_type,
         'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True),
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64]),  # More focused batch sizes
-        'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
-        'activation': trial.suggest_categorical('activation', ['gelu', 'relu']),
-        'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
-        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
-        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
-        'init_scale': trial.suggest_float('init_scale', 0.01, 0.1, log=True)
+        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64])
     }
 
-    # Parameter constraints and relationships
-    if classifier_config['num_layers'] == 1:
-        # For single layer, use larger hidden dim
-        classifier_config['hidden_dim'] = max(classifier_config['hidden_dim'], 256)
-    elif classifier_config['hidden_dim'] < 256:
-        # Smaller networks might need higher learning rates
-        classifier_config['learning_rate'] = max(classifier_config['learning_rate'], 1e-4)
+    if arch_type == 'plane_resnet':
+        # Plane ResNet specific parameters
+        classifier_config.update({
+            'num_planes': trial.suggest_int('num_planes', 4, 16),
+            'plane_width': trial.suggest_categorical('plane_width', [32, 64, 128, 256]),
+            'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2),
+            'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])  # Add cls_pooling parameter
+        })
+    else:
+        # Standard architecture parameters
+        classifier_config.update({
+            'num_layers': trial.suggest_int('num_layers', 1, 4),
+            'hidden_dim': trial.suggest_categorical('hidden_dim', [32, 64, 128, 256, 512, 1024]),
+            'activation': trial.suggest_categorical('activation', ['gelu', 'relu']),
+            'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
+            'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
+            'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
+            'init_scale': trial.suggest_float('init_scale', 0.01, 0.1, log=True),
+            'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2)
+        })
+
+        # Existing parameter constraints
+        if classifier_config['num_layers'] == 1:
+            classifier_config['hidden_dim'] = max(classifier_config['hidden_dim'], 256)
+        elif classifier_config['hidden_dim'] < 256:
+            classifier_config['learning_rate'] = max(classifier_config['learning_rate'], 1e-4)
     
     # Update config with trial-specific parameters
     config.learning_rate = classifier_config['learning_rate']
@@ -120,7 +133,8 @@ def objective(
     total_steps = len(train_dataloader) * config.num_epochs
     classifier_config['warmup_steps'] = int(total_steps * classifier_config['warmup_ratio'])
     
-    logger.info(f"Trial #{trial.number} hyperparameters:")
+    # Log trial configuration only once
+    logger.info(f"\nTrial #{trial.number} configuration:")
     for key, value in classifier_config.items():
         logger.info(f"  {key}: {value}")
     
@@ -143,7 +157,8 @@ def objective(
     # Training loop
     best_accuracy = 0.0
     no_improve_count = 0
-    patience = max(3, trial.number // 10)  # Increase patience as trials progress
+    # Increase base patience and scale with trial number for better exploration
+    patience = max(5, trial.number // 5)  # Modified patience calculation
     
     if epoch_pbar is not None:
         epoch_pbar.reset()
@@ -183,25 +198,12 @@ def objective(
         else:
             no_improve_count += 1
         
-        # Handle early stopping
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
-            no_improve_count = 0
-            # Update best model info atomically
-            best_model_info.update({
-                'model_state': model.state_dict(),
-                'config': classifier_config.copy(),
-                'accuracy': accuracy,
-                'trial_number': trial.number,
-                'params': trial.params
-            })
-        else:
-            no_improve_count += 1
-        
-        # Pruning check
-        if trial.should_prune() or no_improve_count >= patience:
-            logger.info(f"Trial #{trial.number} pruned!")
-            raise optuna.TrialPruned()
+        # Pruning check - only stop if we've seen enough epochs to be confident
+        if epoch >= min(5, config.num_epochs // 2):  # Add minimum epochs check
+            if trial.should_prune() or no_improve_count >= patience:
+                logger.info(f"Trial #{trial.number} pruned after {epoch + 1} epochs!")
+                logger.info(f"Best accuracy achieved: {best_accuracy:.4f}")
+                raise optuna.TrialPruned()
     
     logger.info(f"Trial #{trial.number} finished with best accuracy: {best_accuracy:.4f}")
     
@@ -222,9 +224,9 @@ def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm
     epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=True)
     return trial_pbar, epoch_pbar
 
-def load_previous_best_trial(study_name: str) -> Optional[Dict[str, Any]]:
+def load_previous_best_trial(study_name: str, config: ModelConfig) -> Optional[Dict[str, Any]]:
     """Load the previous best trial if it exists."""
-    best_model_path = f'best_model_{study_name}.pt'
+    best_model_path = config.best_trials_dir / f'best_model_{study_name}.pt'
     if os.path.exists(best_model_path):
         try:
             checkpoint = torch.load(best_model_path)
@@ -239,10 +241,11 @@ def load_previous_best_trial(study_name: str) -> Optional[Dict[str, Any]]:
             logger.warning(f"Error loading previous best trial: {e}")
     return None
 
-def save_best_trial(best_model_info: Dict[str, Any], study_name: str) -> None:
+def save_best_trial(best_model_info: Dict[str, Any], study_name: str, config: ModelConfig) -> None:
     """Save the current best trial, comparing with previous best if it exists."""
-    final_model_path = f'best_model_{study_name}.pt'
-    previous_best = load_previous_best_trial(study_name)
+    config.best_trials_dir.mkdir(exist_ok=True, parents=True)
+    final_model_path = config.best_trials_dir / f'best_model_{study_name}.pt'
+    previous_best = load_previous_best_trial(study_name, config)
     
     if previous_best is not None:
         if previous_best['accuracy'] >= best_model_info['accuracy']:
@@ -266,9 +269,9 @@ def save_best_trial(best_model_info: Dict[str, Any], study_name: str) -> None:
     logger.info(f"New best trial number: {best_model_info['trial_number']}")
     logger.info(f"New best accuracy: {best_model_info['accuracy']:.4f}")
 
-def get_best_trial_ever(study_name: str) -> Optional[Dict[str, Any]]:
+def get_best_trial_ever(study_name: str, config: ModelConfig) -> Optional[Dict[str, Any]]:
     """Get the best trial from all previous experiments."""
-    best_model_path = f'best_model_{study_name}.pt'
+    best_model_path = config.best_trials_dir / f'best_model_{study_name}.pt'
     if os.path.exists(best_model_path):
         try:
             checkpoint = torch.load(best_model_path)
@@ -315,15 +318,18 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     # Add callbacks for better analysis
     study.set_user_attr("best_value", 0.0)
     
-    def callback(study: optuna.Study, trial: optuna.Trial):
-        if trial.value > study.user_attrs["best_value"]:
+    # Fix the callback to use the study_name from the closure
+    def callback(study: optuna.Study, trial: optuna.Trial) -> None:
+        if trial.value is not None and trial.value > study.user_attrs["best_value"]:
             study.set_user_attr("best_value", trial.value)
+            config.best_trials_dir.mkdir(exist_ok=True, parents=True)
             # Save best trial info
             torch.save({
                 'trial_number': trial.number,
                 'params': trial.params,
-                'value': trial.value
-            }, f'best_trial_{study_name}.pt')
+                'value': trial.value,
+                'study_name': study_name  # Include study_name in the saved data
+            }, config.best_trials_dir / f'best_trial_{study_name}.pt')
     
     # Dictionary to track best model info
     best_model_info = {}
@@ -343,7 +349,7 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
             objective_with_progress,
             n_trials=config.n_trials,
             timeout=timeout,
-            callbacks=[callback],
+            callbacks=[callback],  # Use the inner callback function
             gc_after_trial=True  # Add garbage collection
         )
     finally:
@@ -353,7 +359,7 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
         
         # Save the best model if we found one
         if best_model_info:
-            save_best_trial(best_model_info, study_name)
+            save_best_trial(best_model_info, study_name, config)
         
         # Plot optimization results
         try:
@@ -375,8 +381,9 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
                     figs['param_importances'] = optuna.visualization.plot_param_importances(study)
                     figs['slice_plot'] = optuna.visualization.plot_slice(study)
                 
+                config.best_trials_dir.mkdir(exist_ok=True, parents=True)
                 for name, fig in figs.items():
-                    fig.write_html(f"{name}_{study_name}.html")
+                    fig.write_html(config.best_trials_dir / f"{name}_{study_name}.html")
             else:
                 logger.warning("No trials completed. Skipping visualizations.")
                 
@@ -405,7 +412,8 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
                 }
             
             # Save as YAML
-            with open(f'study_stats_{study_name}.yaml', 'w') as f:
+            config.best_trials_dir.mkdir(exist_ok=True, parents=True)
+            with open(config.best_trials_dir / f'study_stats_{study_name}.yaml', 'w') as f:
                 yaml.safe_dump(study_stats, f, default_flow_style=False, sort_keys=False)
                 
         except Exception as e:
@@ -424,7 +432,7 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
         return study.best_trial.params
     else:
         logger.warning("No trials completed in current experiment.")
-        best_ever = get_best_trial_ever(study_name)
+        best_ever = get_best_trial_ever(study_name, config)
         if best_ever:
             logger.info("Returning best trial from previous experiments:")
             logger.info(f"  Accuracy: {best_ever['accuracy']:.4f}")
@@ -501,58 +509,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error during optimization: {str(e)}")
         logger.error("Error during optimization", exc_info=True)
-        raise
-
-    args = parse_args()
-    print(f"Parsed arguments: n_trials={args.n_trials}, device={args.device}, data_file={args.data_file}")
-    
-    print("Initializing ModelConfig...")
-    config = ModelConfig.from_args(args)
-    
-    print("Starting optimization run...")
-    try:
-        best_params = run_optimization(
-            config,
-            timeout=args.timeout,
-            study_name=args.study_name,
-            storage=args.storage
-
-        )
-        print("Optimization completed successfully")
-        print(f"Best parameters found: {best_params}")
-    except Exception as e:
-        print(f"Error during optimization: {str(e)}")
-        logger.error("Error during optimization", exc_info=True)
-        raise
-
-    config = ModelConfig.from_args(args)
-    
-    print("Starting optimization run...")
-    try:
-        best_params = run_optimization(
-            config,
-            timeout=args.timeout,
-            study_name=args.study_name,
-            storage=args.storage
-        )
-        print("Optimization completed successfully")
-        print(f"Best parameters found: {best_params}")
-    except Exception as e:
-        print(f"Error during optimization: {str(e)}")
-        logger.error("Error during optimization", exc_info=True)
-        raise
-
-        best_params = run_optimization(
-            config,
-            timeout=args.timeout,
-            study_name=args.study_name,
-            storage=args.storage
-        )
-        print("Optimization completed successfully")
-        print(f"Best parameters found: {best_params}")
-    except Exception as e:
-        print(f"Error during optimization: {str(e)}")
-        logger.error("Error during optimization", exc_info=True)
-        raise
-
         raise

@@ -15,6 +15,7 @@ class ModelConfig:
     device: str = "cpu"
     data_file: Path = Path("data/bbc-text.csv")
     model_save_path: Path = Path("bert_classifier.pth")
+    best_trials_dir: Path = Path("best_trials")  # Add this line
     hidden_dropout: float = 0.1
     n_trials: int = 100
 
@@ -54,6 +55,9 @@ class ModelConfig:
                           help='Path to input data file')
         paths.add_argument('--model_save_path', type=Path, default=cls.model_save_path,
                           help='Path to save the trained model')
+        # Add best trials directory argument
+        paths.add_argument('--best_trials_dir', type=Path, default=cls.best_trials_dir,
+                          help='Directory to save best trial models and results')
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':
