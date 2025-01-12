@@ -17,8 +17,11 @@ class ModelConfig:
     best_trials_dir: Path = Path("best_trials")  # Base directory
     model_save_path: Path = Path("best_trials/bert_classifier.pth")  # Final model path
     hidden_dropout: float = 0.1
-    n_trials: int = 100
-    sampler: str = 'tpe'  # Add sampler attribute with default value
+    n_trials: int = None  # Change default to None
+    n_experiments: int = 1  # Number of experiments to run
+    trials_per_experiment: int = None  # Trials per experiment, if None uses n_trials
+    sampler: str = 'tpe'  # Default sampler is 'tpe'
+    metric: str = 'f1'  # Default to F1 score for model assessment
 
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -48,10 +51,13 @@ class ModelConfig:
         system.add_argument('--device', type=str, default=cls.device,
                           choices=['cpu', 'cuda'], help='Device to use for training')
         system.add_argument('--n_trials', type=int, default=cls.n_trials,
-                          help='Number of optimization trials')
+                          help='Total number of trials (used when trials_per_experiment not set)')
         system.add_argument('--sampler', type=str, default=cls.sampler,
-                          choices=['tpe', 'random', 'cmaes', 'qmc', 'grid'],  # Remove 'nsgaii', 'motpe'
+                          choices=['tpe', 'random', 'cmaes', 'qmc'],
                           help='Optuna sampler to use')
+        system.add_argument('--metric', type=str, default=cls.metric,
+                          choices=['f1', 'accuracy'],
+                          help='Metric to use for model assessment')
 
         # File paths
         paths = parser.add_argument_group('File Paths')
@@ -62,6 +68,13 @@ class ModelConfig:
         # Add best trials directory argument
         paths.add_argument('--best_trials_dir', type=Path, default=cls.best_trials_dir,
                           help='Directory to save best trial models and results')
+
+        # Experiment settings
+        experiment = parser.add_argument_group('Experiment Configuration')
+        experiment.add_argument('--n_experiments', type=int, default=cls.n_experiments,
+                              help='Number of experiments to run')
+        experiment.add_argument('--trials_per_experiment', type=int, default=cls.trials_per_experiment,
+                              help='Number of trials per experiment. If not set, uses n_trials')
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':
@@ -97,3 +110,22 @@ class ModelConfig:
             raise FileNotFoundError(f"Data file not found: {self.data_file}")
         if not torch.cuda.is_available() and self.device.startswith("cuda"):
             raise RuntimeError("CUDA device requested but CUDA is not available")
+        
+        # Validate experiment settings and calculate n_trials
+        if self.n_experiments < 1:
+            raise ValueError("n_experiments must be positive")
+        if self.trials_per_experiment is not None and self.trials_per_experiment < 1:
+            raise ValueError("trials_per_experiment must be positive")
+            
+        # Calculate total trials if not explicitly set
+        if self.n_trials is None:
+            if self.trials_per_experiment is not None:
+                self.n_trials = self.n_experiments * self.trials_per_experiment
+            else:
+                self.n_trials = 100  # Default fallback value
+        elif self.n_trials < 1:
+            raise ValueError("n_trials must be positive")
+        
+        # Validate metric
+        if self.metric not in ['f1', 'accuracy']:
+            raise ValueError("metric must be either 'f1' or 'accuracy'")

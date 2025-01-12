@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Tuple, Optional, Any
 import optuna
 import torch
+import time  # Add this import
 from torch.utils.data import DataLoader
 import logging
 from sklearn.model_selection import train_test_split
@@ -29,38 +30,35 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 def create_study(study_name: str, storage: Optional[str] = None, 
-                sampler_type: str = 'tpe') -> optuna.Study:
+                sampler_type: str = 'tpe', seed: Optional[int] = None) -> optuna.Study:
     """Create an Optuna study with enhanced sampling and pruning
     
-    Available samplers:
-    - 'tpe': Tree-structured Parzen Estimators (default)
-    - 'random': Random sampling
-    - 'cmaes': Covariance Matrix Adaptation Evolution Strategy
-    - 'qmc': Quasi Monte Carlo
-    - 'grid': Grid sampling
+    Args:
+        study_name: Name of the study
+        storage: Optional database URL for storage
+        sampler_type: Type of sampler to use ('tpe', 'random', 'cmaes', 'qmc')
+        seed: Random seed for the sampler. If None, a random seed will be used.
     """
+    if seed is None:
+        seed = int(time.time())  # Use current time as seed if none provided
+        
     sampler = {
         'tpe': TPESampler(
             n_startup_trials=10,
             n_ei_candidates=24,
             multivariate=True,
-            seed=42
+            seed=seed
         ),
-        'random': optuna.samplers.RandomSampler(seed=42),
+        'random': optuna.samplers.RandomSampler(seed=seed),
         'cmaes': optuna.samplers.CmaEsSampler(
             n_startup_trials=10,
-            seed=42
+            seed=seed
         ),
         'qmc': optuna.samplers.QMCSampler(
             qmc_type='sobol',
-            seed=42
-        ),
-        'grid': optuna.samplers.GridSampler({
-            'learning_rate': [1e-5, 5e-5, 1e-4],
-            'batch_size': [16, 32, 64],
-            'num_layers': [1, 2, 3]
-        })
-    }.get(sampler_type, TPESampler(seed=42))
+            seed=seed
+        )
+    }.get(sampler_type, TPESampler(seed=seed))  # Falls back to TPE sampler if invalid sampler type is provided
 
     pruner = HyperbandPruner(
         min_resource=1,
@@ -180,7 +178,7 @@ def objective(
     )
     
     # Training loop
-    best_accuracy = 0.0
+    best_score = 0.0
     no_improve_count = 0
     # Increase base patience and scale with trial number for better exploration
     patience = max(5, trial.number // 5)  # Modified patience calculation
@@ -197,26 +195,26 @@ def objective(
             epoch_pbar.set_description(f'Trial {trial.number} Epoch {epoch+1}/{config.num_epochs}')
         
         trainer.train_epoch(train_dataloader, optimizer, scheduler)
-        accuracy, _ = trainer.evaluate(val_dataloader)
+        score, _ = trainer.evaluate(val_dataloader)
         
         if epoch_pbar is not None:
             epoch_pbar.update(1)
             epoch_pbar.set_postfix({
-                'accuracy': f'{accuracy:.4f}',
+                'f1' if config.metric == 'f1' else 'accuracy': f'{score:.4f}',
                 'trial': f'{trial.number}/{config.n_trials}'
             })
         
-        trial.report(accuracy, epoch)
+        trial.report(score, epoch)
         
         # Save model if it's the best so far
-        if accuracy > best_accuracy:
-            best_accuracy = accuracy
+        if score > best_score:
+            best_score = score
             no_improve_count = 0
             # Update best model info atomically
             best_model_info.update({
                 'model_state': model.state_dict(),
                 'config': classifier_config.copy(),
-                'accuracy': accuracy,
+                f'{config.metric}_score': score,
                 'trial_number': trial.number,
                 'params': trial.params
             })
@@ -227,15 +225,15 @@ def objective(
         if epoch >= min(5, config.num_epochs // 2):  # Add minimum epochs check
             if trial.should_prune() or no_improve_count >= patience:
                 logger.info(f"Trial #{trial.number} pruned after {epoch + 1} epochs!")
-                logger.info(f"Best accuracy achieved: {best_accuracy:.4f}")
+                logger.info(f"Best {config.metric} score achieved: {best_score:.4f}")
                 raise optuna.TrialPruned()
     
-    logger.info(f"Trial #{trial.number} finished with best accuracy: {best_accuracy:.4f}")
+    logger.info(f"Trial #{trial.number} finished with best {config.metric} score: {best_score:.4f}")
     
     if trial_pbar is not None:
         trial_pbar.update(1)
     
-    return best_accuracy
+    return best_score
 
 def load_data(config: ModelConfig) -> Tuple[List[str], List[int], LabelEncoder]:
     df = pd.read_csv(config.data_file)
@@ -262,8 +260,9 @@ def load_previous_best_trial(study_name: str, config: ModelConfig) -> Optional[D
         
     try:
         checkpoint = torch.load(best_model_path, map_location='cpu')
+        metric_key = f'{config.metric}_score'
         return {
-            'accuracy': checkpoint['accuracy'],
+            metric_key: checkpoint.get(metric_key, checkpoint.get('accuracy', 0.0)),  # Backward compatibility
             'trial_number': checkpoint['trial_number'],
             'model_state': checkpoint['model_state_dict'],
             'config': checkpoint['config'],
@@ -283,27 +282,30 @@ def save_best_trial(best_model_info: Dict[str, Any], study_name: str, config: Mo
     final_model_path = config.best_trials_dir / f'best_model_{study_name}.pt'
     previous_best = load_previous_best_trial(study_name, config)
     
+    metric_key = f'{config.metric}_score'
     if previous_best is not None:
-        if previous_best['accuracy'] >= best_model_info['accuracy']:
+        prev_score = previous_best.get(metric_key, previous_best.get('accuracy', 0.0))  # Backward compatibility
+        if prev_score >= best_model_info[metric_key]:
             logger.info("Previous best trial has better or equal performance. Keeping previous model.")
-            logger.info(f"Previous best accuracy: {previous_best['accuracy']:.4f}")
-            logger.info(f"Current best accuracy: {best_model_info['accuracy']:.4f}")
+            logger.info(f"Previous best {config.metric}: {prev_score:.4f}")
+            logger.info(f"Current best {config.metric}: {best_model_info[metric_key]:.4f}")
             return
 
     # Save new best model
-    torch.save({
+    save_dict = {
         'model_state_dict': best_model_info['model_state'],
         'config': best_model_info['config'],
         'trial_number': best_model_info['trial_number'],
-        'accuracy': best_model_info['accuracy'],
+        metric_key: best_model_info[metric_key],  # Use the correct metric key
         'study_name': study_name,
         'hyperparameters': best_model_info['params'],
         'timestamp': datetime.now().isoformat()
-    }, final_model_path)
+    }
+    torch.save(save_dict, final_model_path)
     
     logger.info(f"Saved new best model to {final_model_path}")
     logger.info(f"New best trial number: {best_model_info['trial_number']}")
-    logger.info(f"New best accuracy: {best_model_info['accuracy']:.4f}")
+    logger.info(f"New best {config.metric}: {best_model_info[metric_key]:.4f}")
 
 def get_best_trial_ever(study_name: str, config: ModelConfig) -> Optional[Dict[str, Any]]:
     """Get the best trial from all previous experiments."""
@@ -311,8 +313,9 @@ def get_best_trial_ever(study_name: str, config: ModelConfig) -> Optional[Dict[s
     if os.path.exists(best_model_path):
         try:
             checkpoint = torch.load(best_model_path)
+            metric_key = f'{config.metric}_score'
             return {
-                'accuracy': checkpoint['accuracy'],
+                'score': checkpoint.get(metric_key, checkpoint.get('accuracy', 0.0)),  # Backward compatibility
                 'trial_number': checkpoint['trial_number'],
                 'params': checkpoint['hyperparameters'],
                 'timestamp': checkpoint.get('timestamp', 'unknown')
@@ -323,10 +326,12 @@ def get_best_trial_ever(study_name: str, config: ModelConfig) -> Optional[Dict[s
 
 def run_optimization(config: ModelConfig, timeout: Optional[int] = None, 
                     study_name: str = 'bert_optimization',
-                    storage: Optional[str] = None) -> Dict[str, Any]:
+                    storage: Optional[str] = None,
+                    seed: Optional[int] = None,
+                    n_trials: Optional[int] = None) -> Dict[str, Any]:
     logger.info("\n" + "="*50)
     logger.info("Starting optimization")
-    logger.info(f"Number of trials: {config.n_trials}")
+    logger.info(f"Number of trials: {n_trials or config.n_trials}")
     logger.info(f"Model config:")
     logger.info(f"  BERT model: {config.bert_model_name}")
     logger.info(f"  Device: {config.device}")
@@ -345,11 +350,11 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     
     # Create progress bars
     logger.info("\nInitializing progress bars...")
-    trial_pbar, epoch_pbar = initialize_progress_bars(config.n_trials, config.num_epochs)
+    trial_pbar, epoch_pbar = initialize_progress_bars(n_trials or config.n_trials, config.num_epochs)
     
     # Create study with sampler from config
     logger.info(f"Creating study with {config.sampler} sampler...")
-    study = create_study(study_name, storage, config.sampler)
+    study = create_study(study_name, storage, config.sampler, seed)
     
     # Add callbacks for better analysis
     study.set_user_attr("best_value", 0.0)
@@ -383,7 +388,7 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     try:
         study.optimize(
             objective_with_progress,
-            n_trials=config.n_trials,
+            n_trials=n_trials or config.n_trials,  # Use provided n_trials if available
             timeout=timeout,
             callbacks=[callback],  # Use the inner callback function
             gc_after_trial=True  # Add garbage collection
@@ -499,9 +504,15 @@ def parse_args() -> argparse.Namespace:
                       help='Name for the Optuna study')
     optim.add_argument('--storage', type=str, default=None,
                       help='Database URL for Optuna storage')
+    optim.add_argument('--seed', type=int, default=None,
+                      help='Random seed for sampler. Use different seeds for different experiments.')
     # Remove duplicate sampler argument since it's now in ModelConfig
     
     args = parser.parse_args()
+    
+    # Calculate total trials based on experiments and trials per experiment
+    if args.trials_per_experiment is not None:
+        args.n_trials = args.n_experiments * args.trials_per_experiment
     
     # Validate arguments (similar to bert_classifier.py)
     if args.device == 'cuda' and not torch.cuda.is_available():
@@ -533,17 +544,38 @@ if __name__ == "__main__":
     print("Initializing ModelConfig...")
     config = ModelConfig.from_args(args)
     
-    print("Starting optimization run...")
+    print("Starting optimization runs...")
     try:
-        best_params = run_optimization(
-            config,
-            timeout=args.timeout,
-            study_name=args.study_name,
-            storage=args.storage
-        )
-        print("Optimization completed successfully")
-        print(f"Best parameters found: {best_params}")
+        trials_per_exp = args.trials_per_experiment or args.n_trials
+        # Save original n_trials to restore later
+        original_n_trials = config.n_trials
+        
+        print(f"Running {args.n_experiments} experiments with {trials_per_exp} trials each")
+        for experiment_id in range(args.n_experiments):
+            study_name = f"{args.study_name}_exp{experiment_id}"
+            seed = args.seed + experiment_id if args.seed is not None else None
+            
+            print(f"\nStarting experiment {experiment_id + 1}/{args.n_experiments}")
+            print(f"Study name: {study_name}")
+            print(f"Seed: {seed if seed is not None else 'random'}")
+            print(f"Trials: {trials_per_exp}")
+            
+            best_params = run_optimization(
+                config,
+                timeout=args.timeout,
+                study_name=study_name,
+                storage=args.storage,
+                seed=seed,
+                n_trials=trials_per_exp
+            )
+            print(f"Experiment {experiment_id + 1} completed")
+            print(f"Best parameters: {best_params}")
+            
+        print("\nAll experiments completed successfully")
     except Exception as e:
         print(f"Error during optimization: {str(e)}")
         logger.error("Error during optimization", exc_info=True)
         raise
+    finally:
+        # Restore original n_trials
+        config.n_trials = original_n_trials

@@ -1,12 +1,12 @@
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Literal
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from transformers import get_linear_schedule_with_warmup
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, f1_score
 from config import ModelConfig
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ class Trainer:
         self.config: ModelConfig = config
         self.device: torch.device = torch.device(config.device)
         self.model.to(self.device)
+        self.metric = getattr(config, 'metric', 'f1')  # Default to f1
 
     def train_epoch(
         self, 
@@ -75,10 +76,17 @@ class Trainer:
                     _, preds = torch.max(outputs, dim=1)
                     predictions.extend(preds.cpu().tolist())
                     actual_labels.extend(batch['label'].cpu().tolist())
-                    
-            return (
-                accuracy_score(actual_labels, predictions),
-                classification_report(actual_labels, predictions, zero_division=0)
-            )
+            
+            # Calculate both metrics but return F1 as primary metric
+            accuracy = accuracy_score(actual_labels, predictions)
+            if self.metric == 'f1':
+                primary_score = f1_score(actual_labels, predictions, average='macro')
+            else:
+                primary_score = accuracy
+                
+            report = classification_report(actual_labels, predictions, zero_division=0)
+            logger.info(f"Evaluation metrics - F1: {primary_score:.4f}, Accuracy: {accuracy:.4f}")
+            
+            return (primary_score, report)
         except Exception as e:
             raise TrainerError(f"Error during evaluation: {str(e)}") from e
