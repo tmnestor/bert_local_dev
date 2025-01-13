@@ -308,7 +308,7 @@ def parse_args() -> argparse.Namespace:
     optim = parser.add_argument_group('Optimization')
     optim.add_argument('--timeout', type=int, default=None,
                       help='Optimization timeout in seconds')
-    optim.add_argument('--study-name', type=str, default='bert_optimization',
+    optim.add_argument('--study_name', type=str, default='bert_optimization', # Changed from study-name
                       help='Name for the Optuna study')
     optim.add_argument('--storage', type=str, default=None,
                       help='Database URL for Optuna storage')

@@ -1,121 +1,120 @@
 # BERT Local Development Environment
 
-A robust framework for training, fine-tuning, and optimizing BERT-based models with advanced architecture support and hyperparameter optimization.
+A development framework for BERT model optimization featuring standard and PlaneResNet architectures with Optuna-based hyperparameter tuning.
 
 ## Project Structure
 
 ```
 bert_local_dev/
 ├── src/
-│   ├── models/              # Model architectures
-│   │   ├── model.py        # Base BERT classifier with PlaneResNet
-│   │   └── bert_classifier.py
-│   ├── training/           # Training components
-│   │   ├── trainer.py      # Training loop and evaluation
-│   │   └── dataset.py      # Dataset handling
-│   ├── optimize/           # Hyperparameter optimization
-│   │   └── optimize.py     # Optuna-based optimization
-│   └── config/            # Configuration management
-├── all-MiniLM-L6-v2/      # Model files
-│   ├── data_config.json   # Dataset configuration
-│   └── vocab.txt         # Model vocabulary
-└── nlp_env.yml           # Conda environment
+│   ├── models/
+│   │   ├── model.py          # BERTClassifier with PlaneResNet implementation
+│   │   └── bert_classifier.py # High-level classifier interface
+│   ├── training/
+│   │   ├── trainer.py        # Training loop and evaluation logic
+│   │   └── dataset.py        # TextClassificationDataset implementation
+│   ├── optimize/
+│   │   └── optimize.py       # Optuna optimization framework
+│   └── config/              # Configuration management
+├── all-MiniLM-L6-v2/       # Model files
+└── nlp_env.yml             # Conda environment specification
 ```
 
-## Key Features
+## Usage
 
-- **Advanced Architectures**:
-  - Standard BERT classifier with configurable layers
-  - PlaneResNet architecture for improved performance
-  - Flexible pooling strategies (CLS token or mean pooling)
+Example optimization command:
+```bash
+python -m src.optimize.optimize \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --n_trials 3 \
+    --study_name "bert_optimization" \
+    --metric f1 \
+    --num_classes 2
+```
 
-- **Hyperparameter Optimization**:
-  - Optuna-based optimization with multiple samplers
-  - Support for TPE, CMA-ES, and random sampling
-  - Automated trial pruning and early stopping
-  - Parallel optimization support
+Required CSV format:
+- Must contain 'text' and 'category' columns
+- Categories will be automatically encoded
 
-- **Training Features**:
-  - Configurable learning schedules
-  - Multiple regularization options
-  - Progress tracking and checkpointing
-  - Comprehensive metrics and evaluation
+## Architectures
+
+### Standard Classifier
+```python
+{
+    'architecture_type': 'standard',
+    'num_layers': 1-4,
+    'hidden_dim': [32-1024],
+    'activation': ['gelu', 'relu'],
+    'regularization': ['dropout', 'batchnorm'],
+    'dropout_rate': 0.1-0.5,
+    'cls_pooling': True/False
+}
+```
+
+### PlaneResNet
+```python
+{
+    'architecture_type': 'plane_resnet',
+    'num_planes': 4-16,
+    'plane_width': [32, 64, 128, 256],
+    'cls_pooling': True/False
+}
+```
+
+## Optimization Features
+
+- Automated hyperparameter search using Optuna
+- Supports multiple sampling strategies:
+  - TPE (default)
+  - Random
+  - CMA-ES
+  - QMC (Sobol)
+- Early stopping with HyperbandPruner
+- Progress tracking with tqdm
+- Checkpointing of best models
+- Multi-experiment support with seeds
 
 ## Environment Setup
 
 ```bash
-# Create and activate environment
-conda env create --file nlp_env.yml
-conda activate nlp_env
+# Create environment
+conda env create -f nlp_env.yml
 
-# Optional: Recreate from scratch
-conda env remove --name nlp_env -y && conda env create --file nlp_env.yml
+# Optional: Clean reinstall
+conda env remove -n nlp_env -y && conda env create -f nlp_env.yml
 ```
 
-## Model Configuration
+## Training Configuration
 
-The system supports two main classifier architectures:
+Key parameters:
+- `learning_rate`: 1e-5 to 1e-3 (log scale)
+- `weight_decay`: 1e-8 to 1e-3 (log scale)
+- `batch_size`: [16, 32, 64]
+- `warmup_ratio`: 0.0 to 0.2
+- `num_epochs`: Configurable, default 10
 
-### Standard Architecture
-```python
-classifier_config = {
-    'architecture_type': 'standard',
-    'num_layers': 2,
-    'hidden_dim': 256,
-    'activation': 'gelu',
-    'regularization': 'dropout',
-    'dropout_rate': 0.1,
-    'cls_pooling': True
-}
-```
+## Metrics
 
-### PlaneResNet Architecture
-```python
-classifier_config = {
-    'architecture_type': 'plane_resnet',
-    'num_planes': 8,
-    'plane_width': 128,
-    'cls_pooling': True
-}
-```
+Supported evaluation metrics:
+- F1 score (macro)
+- Accuracy
 
-## Running Optimization
+Progress is tracked using both metrics, with one selected as primary for optimization.
 
-```bash
-python -m src.optimize.optimize \
-    --model-name "all-MiniLM-L6-v2" \
-    --data-file "path/to/data.csv" \
-    --n-trials 100 \
-    --study-name "bert_optimization" \
-    --metric f1
-```
+## Best Practices
 
-## Dataset Configuration
+1. Start with a small number of trials (3-5) for testing
+2. Use TPE sampler for best results
+3. Enable checkpointing for long runs
+4. Monitor early stopping behavior
+5. Consider architecture-specific parameter ranges
 
-The `data_config.json` file specifies training datasets with weights and line counts. Example format:
+## Dependencies
 
-```json
-{
-    "name": "dataset_name",
-    "lines": 10000,
-    "weight": 1
-}
-```
-
-## Environment Variables
-
-Configured in nlp_env.yml:
-- `TOKENIZERS_PARALLELISM`: Controls tokenizer parallelism
-- `PYTORCH_ENABLE_MPS_FALLBACK`: Optional MPS fallback for Apple Silicon
-- `PYTORCH_MPS_HIGH_WATERMARK_RATIO`: Optional memory management for MPS
-
-## Development Best Practices
-
-1. Use the provided model configurations for consistent results
-2. Monitor optimization trials with progress bars
-3. Leverage early stopping for efficient training
-4. Use checkpointing for long-running optimizations
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+See nlp_env.yml for complete list. Key requirements:
+- PyTorch
+- Transformers
+- Optuna
+- scikit-learn
+- pandas
