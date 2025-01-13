@@ -309,7 +309,3 @@ See nlp_env.yml for complete list. Key requirements:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Citation
-
-If you use this code in your research, please cite:
