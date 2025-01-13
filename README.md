@@ -190,7 +190,7 @@ A configurable deep neural network that processes BERT embeddings through sequen
 
 ### PlaneResNet Architecture
 
-The PlaneResNet architecture is an innovative classifier design that processes BERT embeddings through stacked residual planes:
+The PlaneResNet architecture is an innovative classifier design that processes BERT embeddings through sequential residual planes:
 
 ```python
 {
@@ -202,7 +202,6 @@ The PlaneResNet architecture is an innovative classifier design that processes B
 ```
 
 #### Key Features
-- **Parallel Processing**: Multiple ResNet planes process features simultaneously
 - **Residual Connections**: Each plane uses skip connections for better gradient flow
 - **Plane Width**: Controls the dimensionality of feature processing
 - **Adaptive Pooling**: Supports both CLS token and mean pooling strategies
