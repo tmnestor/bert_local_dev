@@ -190,9 +190,8 @@ Progress is tracked using both metrics, with one selected as primary for optimiz
 
 1. Start with a small number of trials (3-5) for testing
 2. Use TPE sampler for best results
-3. Enable checkpointing for long runs
-4. Monitor early stopping behavior
-5. Consider architecture-specific parameter ranges
+3. Monitor early stopping behavior
+4. Consider architecture-specific parameter ranges
 
 ## Dependencies
 
