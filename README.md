@@ -190,7 +190,7 @@ A configurable deep neural network that processes BERT embeddings through sequen
 
 ### PlaneResNet Architecture
 
-The PlaneResNet architecture is an innovative classifier design that processes BERT embeddings through parallel residual planes:
+The PlaneResNet architecture is an innovative classifier design that processes BERT embeddings through stacked residual planes:
 
 ```python
 {
@@ -284,3 +284,33 @@ See nlp_env.yml for complete list. Key requirements:
 - Optuna
 - scikit-learn
 - pandas
+
+## Troubleshooting
+
+### Common Issues
+- **CUDA Out of Memory**: Reduce batch size or model size
+- **FutureWarning for torch.load**: Using `weights_only=True` for all checkpoint loading
+- **Tokenizer Warnings**: Explicitly set `clean_up_tokenization_spaces=True`
+- **Poor Performance**: Check learning rate and increase number of epochs
+
+### Memory Requirements
+- CPU: Minimum 8GB RAM recommended
+- GPU: Minimum 4GB VRAM for small batches
+- Storage: ~500MB for model files and dependencies
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Write tests for new features
+4. Commit your changes (`git commit -m 'Add some amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Citation
+
+If you use this code in your research, please cite:
