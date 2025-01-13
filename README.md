@@ -72,7 +72,7 @@ Required CSV format:
   - QMC (Sobol)
 - Early stopping with HyperbandPruner
 - Progress tracking with tqdm
-- Checkpointing of best models
+- Best model state saving
 - Multi-experiment support with seeds
 
 ## Environment Setup
