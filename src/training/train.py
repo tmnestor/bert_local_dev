@@ -14,7 +14,7 @@ from ..config.config import ModelConfig
 from ..models.model import BERTClassifier
 from .trainer import Trainer
 from .dataset import TextClassificationDataset
-from ..optimize.optimize import initialize_progress_bars  # Reuse progress bars
+from ..tuning.optimize import initialize_progress_bars  # Changed from optimize to tuning
 
 logger = logging.getLogger(__name__)
 
