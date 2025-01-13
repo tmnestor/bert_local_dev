@@ -1,220 +1,121 @@
-# PyTorch Training Framework
+# BERT Local Development Environment
 
-A robust deep learning framework with advanced model architecture selection, hyperparameter tuning, and comprehensive performance analysis.
+A robust framework for training, fine-tuning, and optimizing BERT-based models with advanced architecture support and hyperparameter optimization.
+
+## Project Structure
+
+```
+bert_local_dev/
+├── src/
+│   ├── models/              # Model architectures
+│   │   ├── model.py        # Base BERT classifier with PlaneResNet
+│   │   └── bert_classifier.py
+│   ├── training/           # Training components
+│   │   ├── trainer.py      # Training loop and evaluation
+│   │   └── dataset.py      # Dataset handling
+│   ├── optimize/           # Hyperparameter optimization
+│   │   └── optimize.py     # Optuna-based optimization
+│   └── config/            # Configuration management
+├── all-MiniLM-L6-v2/      # Model files
+│   ├── data_config.json   # Dataset configuration
+│   └── vocab.txt         # Model vocabulary
+└── nlp_env.yml           # Conda environment
+```
 
 ## Key Features
 
-### Model Architectures
-- **ResNet MLP**
-  - Residual connections for deep networks
-  - Configurable batch normalization
-  - Adaptive layer sizing
-  - Gradient-friendly skip connections
+- **Advanced Architectures**:
+  - Standard BERT classifier with configurable layers
+  - PlaneResNet architecture for improved performance
+  - Flexible pooling strategies (CLS token or mean pooling)
 
-- **Complex MLP**
-  - Dynamic width adaptation
-  - Progressive layer size reduction
-  - Optimized dropout rates
-  - Intelligent regularization
+- **Hyperparameter Optimization**:
+  - Optuna-based optimization with multiple samplers
+  - Support for TPE, CMA-ES, and random sampling
+  - Automated trial pruning and early stopping
+  - Parallel optimization support
 
-### Advanced Training Features
-- Early stopping with configurable patience
-- Learning rate scheduling with warmup
-- Gradient clipping and normalization
-- Cross-validation with stability analysis
-- Performance-based pruning
-- Data leakage detection
+- **Training Features**:
+  - Configurable learning schedules
+  - Multiple regularization options
+  - Progress tracking and checkpointing
+  - Comprehensive metrics and evaluation
 
-### Comprehensive Metrics Analysis
-- **Performance Metrics**
-  - Accuracy, Precision, Recall, F1-Score
-  - ROC-AUC and PR-AUC curves
-  - Cohen's Kappa coefficient
-  - Per-class performance analysis
+## Environment Setup
 
-- **Statistical Analysis**
-  - Chi-square independence tests
-  - McNemar's test for model comparison
-  - Cross-validation stability metrics
-  - Confidence intervals for all metrics
-
-- **Visualization**
-  - Normalized confusion matrices
-  - Learning curve plots
-  - Per-class performance plots
-  - Cross-validation analysis plots
-
-### Hyperparameter Optimization
-- Optuna integration with TPE sampler
-- Multi-objective optimization
-- Cross-trial learning
-- Early pruning of poor trials
-- Resource-aware scheduling
-
-## Quick Start
-
-1. Installation:
 ```bash
-git clone https://github.com/tmnestor/pytorch-training-framework.git
-cd pytorch-training-framework
-pip install -r requirements.txt
+# Create and activate environment
+conda env create --file nlp_env.yml
+conda activate nlp_env
+
+# Optional: Recreate from scratch
+conda env remove --name nlp_env -y && conda env create --file nlp_env.yml
 ```
 
-2. Create configuration (config.yaml):
-```yaml
-model:
-  architecture_yaml: "models/architectures/resnet_mlp.yaml"
-  save_path: "checkpoints/model.pt"
-  input_size: 7
-  num_classes: 5
+## Model Configuration
 
-training:
-  epochs: 100
-  batch_size: 32
-  optimizer:
-    name: "Adam"
-    params:
-      lr: 0.001
-  metric: "f1"  # or "accuracy"
-  
-monitoring:
-  log_dir: "logs"
-  enabled: true
-  metrics:
-    save_interval: 1
-    plot_interval: 5
+The system supports two main classifier architectures:
+
+### Standard Architecture
+```python
+classifier_config = {
+    'architecture_type': 'standard',
+    'num_layers': 2,
+    'hidden_dim': 256,
+    'activation': 'gelu',
+    'regularization': 'dropout',
+    'dropout_rate': 0.1,
+    'cls_pooling': True
+}
 ```
 
-3. Run training:
+### PlaneResNet Architecture
+```python
+classifier_config = {
+    'architecture_type': 'plane_resnet',
+    'num_planes': 8,
+    'plane_width': 128,
+    'cls_pooling': True
+}
+```
+
+## Running Optimization
+
 ```bash
-python main.py --mode train --config config.yaml
+python -m src.optimize.optimize \
+    --model-name "all-MiniLM-L6-v2" \
+    --data-file "path/to/data.csv" \
+    --n-trials 100 \
+    --study-name "bert_optimization" \
+    --metric f1
 ```
 
-## Usage Modes
+## Dataset Configuration
 
-### Training
-```bash
-python main.py --mode train --config config.yaml [--force-retrain]
+The `data_config.json` file specifies training datasets with weights and line counts. Example format:
+
+```json
+{
+    "name": "dataset_name",
+    "lines": 10000,
+    "weight": 1
+}
 ```
 
-### Inference with Analysis
-```bash
-python main.py --mode infer --config config.yaml
-```
-- Generates comprehensive performance report
-- Saves detailed metrics and visualizations
-- Performs statistical significance testing
+## Environment Variables
 
-### Online Learning
-```bash
-python main.py --mode online --config config.yaml
-```
+Configured in nlp_env.yml:
+- `TOKENIZERS_PARALLELISM`: Controls tokenizer parallelism
+- `PYTORCH_ENABLE_MPS_FALLBACK`: Optional MPS fallback for Apple Silicon
+- `PYTORCH_MPS_HIGH_WATERMARK_RATIO`: Optional memory management for MPS
 
-## Performance Reports
+## Development Best Practices
 
-The framework generates detailed performance reports including:
-
-1. Overall Metrics
-   - Accuracy, Precision, Recall, F1-Score
-   - Confidence intervals and statistical tests
-
-2. Per-Class Analysis
-   - Individual class performance metrics
-   - Class distribution analysis
-   - Error analysis
-
-3. Statistical Tests
-   - Chi-square test results
-   - McNemar's test
-   - Cross-validation stability
-
-4. Visualizations
-   - Confusion matrices
-   - ROC and PR curves
-   - Learning curves
-   - Cross-validation plots
-
-## Configuration Guide
-
-### Model Architecture
-```yaml
-architecture: resnet_mlp  # or complex_mlp
-input_size: 7
-hidden_size: 256
-num_classes: 5
-batch_norm: true
-activation: "relu"
-n_layers: 3
-```
-
-### Training Settings
-```yaml
-training:
-  epochs: 100
-  batch_size: 32
-  early_stopping:
-    patience: 10
-    min_delta: 0.001
-  cross_validation:
-    n_splits: 5
-    max_epochs: 20
-```
-
-### Monitoring Configuration
-```yaml
-monitoring:
-  enabled: true
-  log_dir: "logs"
-  metrics:
-    save_interval: 1
-    plot_interval: 5
-  performance:
-    track_time: true
-    track_memory: true
-```
-
-## Project Structure
-```
-pytorch-training-framework/
-├── main.py
-├── trainer/
-│   ├── base_trainer.py
-│   ├── hyperparameter_tuner.py
-│   └── online_trainer.py
-├── models/
-│   ├── architectures/
-│   │   ├── base.py
-│   │   ├── resnet_mlp.py
-│   │   └── complex_mlp.py
-│   └── model_loader.py
-├── utils/
-│   ├── metrics_manager.py
-│   ├── performance_monitor.py
-│   ├── config.py
-│   └── logger.py
-└── README.md
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-feature`)
-3. Commit changes (`git commit -m 'Add new feature'`)
-4. Push to branch (`git push origin feature/new-feature`)
-5. Open a Pull Request
+1. Use the provided model configurations for consistent results
+2. Monitor optimization trials with progress bars
+3. Leverage early stopping for efficient training
+4. Use checkpointing for long-running optimizations
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Citation
-
-```bibtex
-@software{pytorch_training_framework,
-  author = {Tod M. Nestor},
-  title = {PyTorch Training Framework},
-  year = {2024},
-  publisher = {GitHub},
-  url = {https://github.com/tmnestor/pytorch-training-framework}
-}
-```# bert_local_dev

@@ -5,6 +5,8 @@ from torch import nn
 from transformers import BertModel
 import logging
 
+from src.config.config import ModelConfig
+
 logger = logging.getLogger(__name__)
 
 class PlaneResNetBlock(nn.Module):
