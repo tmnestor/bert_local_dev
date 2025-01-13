@@ -22,7 +22,81 @@ bert_local_dev/
 
 ## Usage
 
-Example optimization command:
+### Training Modes
+
+The training script supports three modes of operation:
+
+1. **Using Best Optimized Configuration**
+```bash
+# Automatically uses best configuration from previous optimization runs
+python -m src.training.train \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --num_classes 2
+```
+
+2. **Using Default Configuration** (when no optimization results exist)
+```bash
+# Uses standard architecture with default settings
+python -m src.training.train \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --num_classes 2 \
+    --architecture "standard"  # Forces standard architecture
+```
+
+3. **Using Custom Configuration**
+```bash
+# Example: Custom standard architecture
+python -m src.training.train \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --num_classes 2 \
+    --architecture "standard" \
+    --num_layers 3 \
+    --hidden_dim 512 \
+    --activation "relu" \
+    --regularization "batchnorm"
+
+# Example: Custom PlaneResNet architecture
+python -m src.training.train \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --num_classes 2 \
+    --architecture "plane_resnet" \
+    --num_planes 8 \
+    --plane_width 128
+```
+
+The script automatically logs the source and details of the configuration being used:
+```
+Using best configuration from previous optimization:
+Architecture: plane_resnet
+Learning rate: 1e-4
+Weight decay: 0.001
+Number of planes: 8
+Plane width: 128
+
+OR
+
+No previous optimization found. Using default configuration:
+Architecture: standard
+Number of layers: 2
+Hidden dimension: 256
+Activation: gelu
+Regularization: dropout
+
+OR
+
+Using provided configuration:
+Architecture: standard
+Number of layers: 3
+Hidden dimension: 512
+Activation: relu
+Regularization: batchnorm
+```
+
+### Hyperparameter Optimization
 ```bash
 python -m src.optimize.optimize \
     --bert_model_name "all-MiniLM-L6-v2" \
@@ -32,6 +106,21 @@ python -m src.optimize.optimize \
     --metric f1 \
     --num_classes 2
 ```
+
+### Direct Training
+For training with fixed configuration:
+```bash
+python -m src.training.train \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --num_classes 2 \
+    --architecture "standard" \
+    --learning_rate 2e-5 \
+    --num_epochs 10 \
+    --batch_size 32
+```
+
+Use `--architecture plane_resnet` for the PlaneResNet architecture.
 
 ## Data Format
 

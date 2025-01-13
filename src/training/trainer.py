@@ -7,6 +7,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import accuracy_score, classification_report, f1_score
+from tqdm.auto import tqdm
 
 from src.config.config import ModelConfig
 
@@ -34,7 +35,8 @@ class Trainer:
         self, 
         train_dataloader: DataLoader, 
         optimizer: Optimizer, 
-        scheduler: _LRScheduler
+        scheduler: _LRScheduler,
+        progress_bar: Optional[tqdm] = None
     ) -> float:
         """Train for one epoch
         
@@ -63,6 +65,10 @@ class Trainer:
                 optimizer.step()
                 scheduler.step()
                 total_loss += loss.item()
+                
+                if progress_bar:
+                    progress_bar.update(1)
+                    progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
                 
         except Exception as e:
             raise TrainerError(f"Error during training: {str(e)}") from e
@@ -104,7 +110,6 @@ class Trainer:
                 primary_score = accuracy
                 
             report = classification_report(actual_labels, predictions, zero_division=0)
-            logger.info(f"Evaluation metrics - F1: {primary_score:.4f}, Accuracy: {accuracy:.4f}")
             
             return (primary_score, report)
         except Exception as e:
