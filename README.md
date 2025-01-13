@@ -33,9 +33,27 @@ python -m src.optimize.optimize \
     --num_classes 2
 ```
 
-Required CSV format:
-- Must contain 'text' and 'category' columns
-- Categories will be automatically encoded
+## Data Format
+
+The model expects input data in CSV format with specific column names:
+
+```csv
+text,category
+"The economy grew by 2.5% last quarter","economics"
+"Scientists discover new species in Amazon","science"
+"Team wins championship in overtime","sports"
+```
+
+Required columns:
+- `text`: Contains the input text to be classified
+- `category`: Contains the target class/label
+
+Notes:
+- Column names must be exactly "text" and "category" (case-sensitive)
+- Categories are automatically encoded using scikit-learn's LabelEncoder
+- Number of unique categories must match `--num_classes` parameter
+- CSV should use UTF-8 encoding
+- Text can contain quotes and commas (proper CSV escaping required)
 
 ## Architectures
 
