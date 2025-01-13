@@ -57,28 +57,94 @@ Notes:
 
 ## Architectures
 
-### Standard Classifier
+This framework provides two specialized classifier architectures for BERT embeddings:
+
+### Standard Classifier Architecture
+
+A configurable deep neural network that processes BERT embeddings through sequential layers:
+
 ```python
 {
     'architecture_type': 'standard',
-    'num_layers': 1-4,
-    'hidden_dim': [32-1024],
-    'activation': ['gelu', 'relu'],
-    'regularization': ['dropout', 'batchnorm'],
-    'dropout_rate': 0.1-0.5,
-    'cls_pooling': True/False
+    'num_layers': 1-4,         # Number of hidden layers
+    'hidden_dim': [32-1024],   # Dimension of hidden layers
+    'activation': ['gelu', 'relu'],  # Activation function
+    'regularization': ['dropout', 'batchnorm'],  # Regularization type
+    'dropout_rate': 0.1-0.5,   # Dropout probability
+    'cls_pooling': True/False  # Use CLS token vs mean pooling
 }
 ```
 
-### PlaneResNet
+#### Key Features
+- **Progressive Dimensionality**: Smooth dimension transitions between layers
+- **Flexible Depth**: Configurable number of hidden layers (1-4)
+- **Advanced Activations**: Support for modern activation functions
+- **Dual Regularization**: Choice of dropout or batch normalization
+- **Adaptive Pooling**: CLS token or mean pooling strategies
+
+#### Architecture Details
+1. Input layer processes BERT embeddings (768 dimensions)
+2. Configurable hidden layers with:
+   - Linear transformation
+   - Activation function (GELU/ReLU)
+   - Regularization (Dropout/BatchNorm)
+   - Progressive dimension reduction
+3. Final classification layer
+
+#### Advantages
+- Simple yet effective architecture
+- Well-suited for traditional text classification
+- Strong regularization options
+- Memory efficient
+- Easy to interpret
+
+#### Recommended Settings
+- Single layer for simple tasks
+- 2-3 layers for complex tasks
+- Higher dropout (0.3-0.5) for large datasets
+- BatchNorm for deeper configurations
+- Start with smaller hidden dimensions (256-512)
+
+### PlaneResNet Architecture
+
+The PlaneResNet architecture is an innovative classifier design that processes BERT embeddings through parallel residual planes:
+
 ```python
 {
     'architecture_type': 'plane_resnet',
-    'num_planes': 4-16,
-    'plane_width': [32, 64, 128, 256],
-    'cls_pooling': True/False
+    'num_planes': 4-16,        # Number of parallel residual blocks
+    'plane_width': [32, 64, 128, 256],  # Width of each plane
+    'cls_pooling': True/False  # Use CLS token vs mean pooling
 }
 ```
+
+#### Key Features
+- **Parallel Processing**: Multiple ResNet planes process features simultaneously
+- **Residual Connections**: Each plane uses skip connections for better gradient flow
+- **Plane Width**: Controls the dimensionality of feature processing
+- **Adaptive Pooling**: Supports both CLS token and mean pooling strategies
+
+#### Architecture Details
+1. Input projection layer maps BERT embeddings to plane width
+2. N parallel ResNet planes process features independently
+3. Each plane contains:
+   - Two linear transformations
+   - Batch normalization
+   - ReLU activation
+   - Skip connection
+4. Final output layer combines plane outputs for classification
+
+#### Advantages
+- Better feature extraction through parallel processing
+- Reduced vanishing gradient problem via skip connections
+- Flexible capacity scaling through num_planes parameter
+- Efficient parameter usage compared to deep sequential networks
+
+#### Recommended Settings
+- Start with 4-8 planes for small datasets
+- Increase planes (8-16) for complex tasks
+- Use larger plane widths (128, 256) for rich feature spaces
+- Enable cls_pooling for sentence classification tasks
 
 ## Optimization Features
 
