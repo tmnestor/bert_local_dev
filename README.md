@@ -1,6 +1,12 @@
-# BERT Local Development Environment
+# BERT Text Classifier
 
-A development framework for BERT model optimization featuring standard and PlaneResNet architectures with Optuna-based hyperparameter tuning.
+A modular BERT-based text classification system with hyperparameter optimization.
+
+## Configuration System
+
+The project uses a robust configuration system based on dataclasses with validation, serialization, and inheritance support.
+
+### Basic Usage
 
 ## Project Structure
 

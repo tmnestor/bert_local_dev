@@ -1,11 +1,13 @@
-from dataclasses import dataclass, fields
-from typing import Optional, Any
+from dataclasses import dataclass, fields, field
+from typing import Optional, Any, Union
 from pathlib import Path
 import torch
 import argparse
 
+from .base_config import BaseConfig
+
 @dataclass
-class ModelConfig:
+class ModelConfig(BaseConfig):
     bert_model_name: str = './all-MiniLM-L6-v2'
     num_classes: int = 5
     max_length: int = 128
@@ -17,9 +19,9 @@ class ModelConfig:
     best_trials_dir: Path = Path("best_trials")  # Base directory
     model_save_path: Path = Path("best_trials/bert_classifier.pth")  # Final model path
     hidden_dropout: float = 0.1
-    n_trials: int = None  # Change default to None
+    n_trials: Optional[int] = field(default=100)  # Change to use field with default
     n_experiments: int = 1  # Number of experiments to run
-    trials_per_experiment: int = None  # Trials per experiment, if None uses n_trials
+    trials_per_experiment: Optional[int] = field(default=None)  # Make explicitly Optional with field
     sampler: str = 'tpe'  # Default sampler is 'tpe'
     metric: str = 'f1'  # Default to F1 score for model assessment
 
@@ -78,22 +80,21 @@ class ModelConfig:
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':
-        """Create a ModelConfig instance from parsed arguments"""
-        # Get all field names from the dataclass
-        field_names = {f.name for f in fields(cls)}
-        # Filter args.__dict__ to only include fields that exist in ModelConfig
-        config_args = {k: v for k, v in vars(args).items() if k in field_names}
-        return cls(**config_args)
+        """Create config from argparse namespace"""
+        config_dict = {f.name: getattr(args, f.name, None) for f in fields(cls)}
+        return cls.from_dict(config_dict)
 
     def validate(self) -> None:
-        """Validate configuration parameters."""
-        # Create best_trials_dir if it doesn't exist
-        self.best_trials_dir.mkdir(parents=True, exist_ok=True)
+        """Extended validation with parent validation"""
+        super().validate()  # Call parent validation first
         
-        # Create parent directory for model_save_path if it doesn't exist
-        self.model_save_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Existing validations
+        # Model-specific validation
+        self._validate_training_params()
+        self._validate_system_params()
+        self._validate_experiment_params()
+
+    def _validate_training_params(self) -> None:
+        """Validate training-related parameters"""
         if self.num_classes < 1:
             raise ValueError("num_classes must be positive")
         if self.max_length < 1:
@@ -106,26 +107,29 @@ class ModelConfig:
             raise ValueError("learning_rate must be between 0 and 1")
         if not (0.0 <= self.hidden_dropout <= 1.0):
             raise ValueError("hidden_dropout must be between 0 and 1")
-        if not self.data_file.exists():
-            raise FileNotFoundError(f"Data file not found: {self.data_file}")
+
+    def _validate_system_params(self) -> None:
+        """Validate system-related parameters"""
         if not torch.cuda.is_available() and self.device.startswith("cuda"):
             raise RuntimeError("CUDA device requested but CUDA is not available")
-        
-        # Validate experiment settings and calculate n_trials
-        if self.n_experiments < 1:
-            raise ValueError("n_experiments must be positive")
-        if self.trials_per_experiment is not None and self.trials_per_experiment < 1:
-            raise ValueError("trials_per_experiment must be positive")
-            
-        # Calculate total trials if not explicitly set
-        if self.n_trials is None:
-            if self.trials_per_experiment is not None:
-                self.n_trials = self.n_experiments * self.trials_per_experiment
-            else:
-                self.n_trials = 100  # Default fallback value
-        elif self.n_trials < 1:
-            raise ValueError("n_trials must be positive")
-        
-        # Validate metric
         if self.metric not in ['f1', 'accuracy']:
             raise ValueError("metric must be either 'f1' or 'accuracy'")
+
+    def _validate_experiment_params(self) -> None:
+        """Validate experiment-related parameters"""
+        if self.n_experiments < 1:
+            raise ValueError("n_experiments must be positive")
+        
+        # Handle trials_per_experiment - it's allowed to be None
+        if self.trials_per_experiment is not None:
+            if self.trials_per_experiment < 1:
+                raise ValueError("trials_per_experiment must be positive when set")
+            # Update n_trials based on trials_per_experiment if it's set
+            self.n_trials = self.n_experiments * self.trials_per_experiment
+        elif self.n_trials is None:
+            # Set default n_trials if neither is specified
+            self.n_trials = 100
+            
+        # Final validation of n_trials
+        if self.n_trials < 1:
+            raise ValueError("n_trials must be positive")
