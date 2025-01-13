@@ -11,6 +11,8 @@ __pycache__/
 **/*.ipynb
 **/*.pyc
 
+.DS_Store
+
 # Jupyter Notebook checkpoints anywhere in the codebase
 **/.ipynb_checkpoints
 
