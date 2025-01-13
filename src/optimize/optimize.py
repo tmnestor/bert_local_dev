@@ -51,6 +51,13 @@ def load_data(config: ModelConfig) -> Tuple[List[str], List[int], LabelEncoder]:
     le = LabelEncoder()
     texts = df['text'].tolist()
     labels = le.fit_transform(df["category"]).tolist()
+    
+    # Update config with actual number of classes
+    num_classes = len(set(labels))
+    if config.num_classes != num_classes:
+        logger.info(f"Updating num_classes from {config.num_classes} to {num_classes} based on data")
+        config.num_classes = num_classes
+        
     return texts, labels, le
 
 def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
@@ -116,17 +123,17 @@ def run_optimization(config: ModelConfig, timeout: Optional[int] = None,
     logger.info("\n" + "="*50)
     logger.info("Starting optimization")
     logger.info(f"Number of trials: {n_trials or config.n_trials}")
+    
+    # Load data (now updates num_classes automatically)
+    logger.info("\nLoading data...")
+    texts, labels, _ = load_data(config)
+    logger.info(f"Loaded {len(texts)} samples with {config.num_classes} classes")
+    
     logger.info(f"Model config:")
     logger.info(f"  BERT model: {config.bert_model_name}")
     logger.info(f"  Device: {config.device}")
     logger.info(f"  Max length: {config.max_length}")
     logger.info(f"  Metric: {config.metric}")
-    
-    # Load data
-    logger.info("\nLoading data...")
-    texts, labels, _ = load_data(config)
-    logger.info(f"Loaded {len(texts)} samples")
-    logger.info(f"Number of classes: {len(set(labels))}")
     
     # Initialize progress bars
     trial_pbar, epoch_pbar = initialize_progress_bars(n_trials or config.n_trials, config.num_epochs)
@@ -177,7 +184,8 @@ def save_best_trial(best_model_info: Dict[str, Any], study_name: str, config: Mo
         metric_key: best_model_info[metric_key],
         'study_name': study_name,
         'hyperparameters': best_model_info['params'],
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'num_classes': config.num_classes  # Add num_classes to saved info
     }
     torch.save(save_dict, final_model_path)
     logger.info(f"Saved best model to {final_model_path}")
@@ -296,6 +304,27 @@ def save_trial_callback(study_name: str, config: ModelConfig):
                 'study_name': study_name
             }, config.best_trials_dir / f'best_trial_{study_name}.pt')
     return callback
+
+def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> dict:
+    """Load best model configuration from optimization results"""
+    pattern = f"best_trial_{study_name if study_name else '*'}.pt"
+    trial_files = list(best_trials_dir.glob(pattern))
+    
+    if not trial_files:
+        logger.warning("No previous optimization results found")
+        return None
+        
+    # Find the best performing trial
+    best_trial = None
+    best_value = float('-inf')
+    
+    for file in trial_files:
+        trial_data = torch.load(file, weights_only=True)
+        if trial_data['value'] > best_value:
+            best_value = trial_data['value']
+            best_trial = trial_data
+
+    return best_trial
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(

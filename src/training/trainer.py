@@ -145,7 +145,7 @@ class Trainer:
             int: The epoch number from the checkpoint
         """
         try:
-            checkpoint = torch.load(path, map_location=self.device)
+            checkpoint = torch.load(path, map_location=self.device, weights_only=True)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             if optimizer is not None:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

@@ -118,12 +118,12 @@ class BERTClassifier(nn.Module):
 
     def _build_classifier(self, input_size: int, num_classes: int, config: Dict[str, Any]) -> nn.Module:
         if config['architecture_type'] == 'plane_resnet':
-            # Add detailed architecture logging for PlaneResNet
-            logger.info("\nPlaneResNet classifier architecture:")
-            logger.info(f"Input size: {input_size}")
-            logger.info(f"Plane width: {config['plane_width']}")
-            logger.info(f"Number of planes: {config['num_planes']}")
-            logger.info(f"Output size: {num_classes}")
+            logger.info("\nBuilding PlaneResNet classifier:")
+            logger.info(f"  Architecture: {config['architecture_type']}")
+            logger.info(f"  Input size: {input_size}")
+            logger.info(f"  Plane width: {config['plane_width']}")
+            logger.info(f"  Number of planes: {config['num_planes']}")
+            logger.info(f"  Output size: {num_classes}")
             
             return PlaneResNetHead(
                 input_size=input_size,
@@ -134,29 +134,27 @@ class BERTClassifier(nn.Module):
         else:
             layer_sizes = self._calculate_layer_sizes(input_size, config['hidden_dim'], config['num_layers'], num_classes)
             
-            # Enhanced logging for standard architecture
-            logger.info("\nStandard classifier architecture:")
-            logger.info(f"Input size: {layer_sizes[0]}")
-            logger.info(f"Hidden layers: {len(layer_sizes) - 2}")
-            logger.info(f"Hidden dimension: {config['hidden_dim']}")
-            logger.info(f"Activation: {config['activation']}")
-            logger.info(f"Regularization: {config['regularization']}")
+            logger.info("\nBuilding standard classifier:")
+            logger.info(f"  Architecture: {config['architecture_type']}")
+            logger.info(f"  Learning rate: {config.get('learning_rate', 'default')}")
+            logger.info(f"  Weight decay: {config.get('weight_decay', 'default')}")
+            logger.info(f"  Input size: {layer_sizes[0]}")
+            logger.info(f"  Hidden layers: {len(layer_sizes) - 2}")
+            logger.info(f"  Hidden dimension: {config['hidden_dim']}")
+            logger.info(f"  Activation: {config['activation']}")
+            logger.info(f"  Regularization: {config['regularization']}")
             if config['regularization'] == 'dropout':
-                logger.info(f"Dropout rate: {config['dropout_rate']}")
+                logger.info(f"  Dropout rate: {config['dropout_rate']}")
             
             layers = []
             for i in range(len(layer_sizes) - 1):
                 current_size = layer_sizes[i]
                 next_size = layer_sizes[i + 1]
                 
+                layers.append(nn.Linear(current_size, next_size))
                 if i < len(layer_sizes) - 2:  # Hidden layer
-                    logger.info(f"Layer {i+1}: {current_size} -> {next_size}")
-                    layers.append(nn.Linear(current_size, next_size))
                     layers.append(self._get_activation(config['activation']))
                     layers.append(self._get_regularization(config['regularization'], config['dropout_rate'], next_size))
-                else:  # Output layer
-                    logger.info(f"Output layer: {current_size} -> {next_size}")
-                    layers.append(nn.Linear(current_size, next_size))
             
             return nn.Sequential(*layers)
 

@@ -31,8 +31,7 @@ The training script supports three modes of operation:
 # Automatically uses best configuration from previous optimization runs
 python -m src.training.train \
     --bert_model_name "all-MiniLM-L6-v2" \
-    --data_file "data/data.csv" \
-    --num_classes 2
+    --data_file "data/data.csv"
 ```
 
 2. **Using Default Configuration** (when no optimization results exist)
@@ -41,7 +40,6 @@ python -m src.training.train \
 python -m src.training.train \
     --bert_model_name "all-MiniLM-L6-v2" \
     --data_file "data/data.csv" \
-    --num_classes 2 \
     --architecture "standard"  # Forces standard architecture
 ```
 
@@ -51,7 +49,6 @@ python -m src.training.train \
 python -m src.training.train \
     --bert_model_name "all-MiniLM-L6-v2" \
     --data_file "data/data.csv" \
-    --num_classes 2 \
     --architecture "standard" \
     --num_layers 3 \
     --hidden_dim 512 \
@@ -62,7 +59,6 @@ python -m src.training.train \
 python -m src.training.train \
     --bert_model_name "all-MiniLM-L6-v2" \
     --data_file "data/data.csv" \
-    --num_classes 2 \
     --architecture "plane_resnet" \
     --num_planes 8 \
     --plane_width 128
@@ -103,8 +99,7 @@ python -m src.optimize.optimize \
     --data_file "data/data.csv" \
     --n_trials 3 \
     --study_name "bert_optimization" \
-    --metric f1 \
-    --num_classes 2
+    --metric f1
 ```
 
 ### Direct Training
@@ -113,7 +108,6 @@ For training with fixed configuration:
 python -m src.training.train \
     --bert_model_name "all-MiniLM-L6-v2" \
     --data_file "data/data.csv" \
-    --num_classes 2 \
     --architecture "standard" \
     --learning_rate 2e-5 \
     --num_epochs 10 \

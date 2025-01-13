@@ -32,7 +32,7 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> di
     best_value = float('-inf')
     
     for file in trial_files:
-        trial_data = torch.load(file)
+        trial_data = torch.load(file, weights_only=True)  # Add weights_only=True here
         if trial_data['value'] > best_value:
             best_value = trial_data['value']
             best_trial = trial_data
@@ -49,11 +49,7 @@ def train_model(config: ModelConfig, classifier_config: dict = None):
     if classifier_config is None:
         best_config = load_best_configuration(config.best_trials_dir)
         if best_config:
-            logger.info("\nUsing best configuration from previous optimization:")
-            logger.info(f"Architecture: {best_config.get('architecture_type', 'standard')}")
-            logger.info(f"Learning rate: {best_config.get('learning_rate', config.learning_rate)}")
-            logger.info(f"Weight decay: {best_config.get('weight_decay', 0.01)}")
-            
+            logger.info("\nUsing best configuration from previous optimization")
             classifier_config = {
                 'architecture_type': best_config.get('architecture_type', 'standard'),
                 'learning_rate': best_config.get('learning_rate', config.learning_rate),
@@ -63,17 +59,11 @@ def train_model(config: ModelConfig, classifier_config: dict = None):
             
             # Add architecture-specific parameters
             if classifier_config['architecture_type'] == 'plane_resnet':
-                logger.info(f"Number of planes: {best_config['num_planes']}")
-                logger.info(f"Plane width: {best_config['plane_width']}")
                 classifier_config.update({
                     'num_planes': best_config['num_planes'],
                     'plane_width': best_config['plane_width']
                 })
             else:
-                logger.info(f"Number of layers: {best_config.get('num_layers', 2)}")
-                logger.info(f"Hidden dimension: {best_config.get('hidden_dim', 256)}")
-                logger.info(f"Activation: {best_config.get('activation', 'gelu')}")
-                logger.info(f"Regularization: {best_config.get('regularization', 'dropout')}")
                 classifier_config.update({
                     'num_layers': best_config.get('num_layers', 2),
                     'hidden_dim': best_config.get('hidden_dim', 256),
@@ -82,12 +72,7 @@ def train_model(config: ModelConfig, classifier_config: dict = None):
                     'dropout_rate': best_config.get('dropout_rate', 0.1)
                 })
         else:
-            logger.info("\nNo previous optimization found. Using default configuration:")
-            logger.info("Architecture: standard")
-            logger.info("Number of layers: 2")
-            logger.info("Hidden dimension: 256")
-            logger.info("Activation: gelu")
-            logger.info("Regularization: dropout")
+            logger.info("\nNo previous optimization found. Using default configuration")
             classifier_config = {
                 'architecture_type': 'standard',
                 'num_layers': 2,
@@ -98,22 +83,20 @@ def train_model(config: ModelConfig, classifier_config: dict = None):
                 'cls_pooling': True
             }
     else:
-        logger.info("\nUsing provided configuration:")
-        logger.info(f"Architecture: {classifier_config['architecture_type']}")
-        if classifier_config['architecture_type'] == 'plane_resnet':
-            logger.info(f"Number of planes: {classifier_config['num_planes']}")
-            logger.info(f"Plane width: {classifier_config['plane_width']}")
-        else:
-            logger.info(f"Number of layers: {classifier_config['num_layers']}")
-            logger.info(f"Hidden dimension: {classifier_config['hidden_dim']}")
-            logger.info(f"Activation: {classifier_config['activation']}")
-            logger.info(f"Regularization: {classifier_config['regularization']}")
+        logger.info("\nUsing provided configuration")
     
     # Load and preprocess data
     df = pd.read_csv(config.data_file)
     texts = df['text'].tolist()
     labels = pd.Categorical(df['category']).codes.tolist()
-    logger.info(f"Loaded {len(texts)} samples with {len(set(labels))} classes")
+    num_classes = len(set(labels))
+    
+    # Update config with actual number of classes
+    if config.num_classes != num_classes:
+        logger.info(f"Updating num_classes from {config.num_classes} to {num_classes} based on data")
+        config.num_classes = num_classes
+    
+    logger.info(f"Loaded {len(texts)} samples with {num_classes} classes")
     
     # Split data
     train_texts, val_texts, train_labels, val_labels = train_test_split(
@@ -199,10 +182,10 @@ def parse_args() -> argparse.Namespace:
     
     ModelConfig.add_argparse_args(parser)
     
-    # Add architecture type argument
-    parser.add_argument('--architecture', type=str, default='standard',
+    # Add architecture type argument, but make it optional
+    parser.add_argument('--architecture', type=str, default=None,
                        choices=['standard', 'plane_resnet'],
-                       help='Classifier architecture to use')
+                       help='Classifier architecture to use. If not specified, uses best configuration from optimization.')
     
     return parser.parse_args()
 
@@ -215,23 +198,27 @@ if __name__ == "__main__":
     args = parse_args()
     config = ModelConfig.from_args(args)
     
-    # Define architecture config
-    if args.architecture == 'plane_resnet':
-        classifier_config = {
-            'architecture_type': 'plane_resnet',
-            'num_planes': 8,
-            'plane_width': 128,
-            'cls_pooling': True
-        }
+    # Only create classifier_config if architecture is explicitly specified
+    if args.architecture:
+        logger.info("\nUsing explicitly specified architecture configuration")
+        if args.architecture == 'plane_resnet':
+            classifier_config = {
+                'architecture_type': 'plane_resnet',
+                'num_planes': 8,
+                'plane_width': 128,
+                'cls_pooling': True
+            }
+        else:
+            classifier_config = {
+                'architecture_type': 'standard',
+                'num_layers': 2,
+                'hidden_dim': 256,
+                'activation': 'gelu',
+                'regularization': 'dropout',
+                'dropout_rate': 0.1,
+                'cls_pooling': True
+            }
     else:
-        classifier_config = {
-            'architecture_type': 'standard',
-            'num_layers': 2,
-            'hidden_dim': 256,
-            'activation': 'gelu',
-            'regularization': 'dropout',
-            'dropout_rate': 0.1,
-            'cls_pooling': True
-        }
+        classifier_config = None  # Let train_model try to load best configuration
     
     train_model(config, classifier_config)
