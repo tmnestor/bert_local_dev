@@ -1,178 +1,142 @@
 #!/usr/bin/env python
 
-import logging
 import argparse
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader
-from transformers import BertTokenizer, get_linear_schedule_with_warmup
-from sklearn.model_selection import train_test_split
-import pandas as pd
-import glob
+from transformers import get_linear_schedule_with_warmup
 
 from ..config.config import ModelConfig
 from ..models.model import BERTClassifier
 from .trainer import Trainer
-from .dataset import TextClassificationDataset
-from ..tuning.optimize import initialize_progress_bars  # Changed from optimize to tuning
+from ..utils.train_utils import (
+    load_and_preprocess_data,
+    create_dataloaders,
+    initialize_progress_bars,
+    save_model_state
+)
+from ..utils.logging_manager import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> dict:
     """Load best model configuration from optimization results"""
-    pattern = f"best_trial_{study_name if study_name else '*'}.pt"
+    pattern = f"best_trial_{study_name or '*'}.pt"
     trial_files = list(best_trials_dir.glob(pattern))
-    
+
     if not trial_files:
         logger.warning("No previous optimization results found")
         return None
-        
+
     # Find the best performing trial
     best_trial = None
     best_value = float('-inf')
-    
+    best_file = None
+
     for file in trial_files:
         trial_data = torch.load(file, weights_only=True)  # Add weights_only=True here
         if trial_data['value'] > best_value:
             best_value = trial_data['value']
             best_trial = trial_data
-            
+            best_file = file
+
     if best_trial:
-        logger.info(f"Loaded best configuration from {file}")
-        logger.info(f"Best trial score: {best_value:.4f}")
+        logger.info("Loaded best configuration from %s", best_file)
+        logger.info("Best trial score: %.4f", best_value)
         return best_trial['params']
     return None
 
-def train_model(config: ModelConfig, classifier_config: dict = None):
+def train_model(model_config: ModelConfig, clf_config: dict = None):
     """Train a model with fixed or optimized configuration"""
     # Try to load best configuration if none provided
-    if classifier_config is None:
-        best_config = load_best_configuration(config.best_trials_dir)
-        if best_config:
-            logger.info("\nUsing best configuration from previous optimization")
-            classifier_config = {
-                'architecture_type': best_config.get('architecture_type', 'standard'),
-                'learning_rate': best_config.get('learning_rate', config.learning_rate),
-                'weight_decay': best_config.get('weight_decay', 0.01),
-                'cls_pooling': best_config.get('cls_pooling', True),
-            }
-            
-            # Add architecture-specific parameters
-            if classifier_config['architecture_type'] == 'plane_resnet':
-                classifier_config.update({
-                    'num_planes': best_config['num_planes'],
-                    'plane_width': best_config['plane_width']
-                })
-            else:
-                classifier_config.update({
-                    'num_layers': best_config.get('num_layers', 2),
-                    'hidden_dim': best_config.get('hidden_dim', 256),
-                    'activation': best_config.get('activation', 'gelu'),
-                    'regularization': best_config.get('regularization', 'dropout'),
-                    'dropout_rate': best_config.get('dropout_rate', 0.1)
-                })
-        else:
+    if clf_config is None:
+        clf_config = load_best_configuration(model_config.best_trials_dir)
+        
+        # Ensure we have a valid configuration
+        if clf_config is None:
             logger.info("\nNo previous optimization found. Using default configuration")
-            classifier_config = {
+            clf_config = {
                 'architecture_type': 'standard',
                 'num_layers': 2,
                 'hidden_dim': 256,
+                'learning_rate': model_config.learning_rate,
+                'weight_decay': 0.01,
                 'activation': 'gelu',
                 'regularization': 'dropout',
                 'dropout_rate': 0.1,
-                'cls_pooling': True
+                'cls_pooling': True,
+                'batch_size': model_config.batch_size
             }
-    else:
-        logger.info("\nUsing provided configuration")
     
-    # Load and preprocess data
-    df = pd.read_csv(config.data_file)
-    texts = df['text'].tolist()
-    labels = pd.Categorical(df['category']).codes.tolist()
-    num_classes = len(set(labels))
-    
-    # Update config with actual number of classes
-    if config.num_classes != num_classes:
-        logger.info(f"Updating num_classes from {config.num_classes} to {num_classes} based on data")
-        config.num_classes = num_classes
-    
-    logger.info(f"Loaded {len(texts)} samples with {num_classes} classes")
-    
-    # Split data
-    train_texts, val_texts, train_labels, val_labels = train_test_split(
-        texts, labels, test_size=0.2, random_state=42
+    # Load and preprocess data using utility function
+    texts, labels, _ = load_and_preprocess_data(model_config)
+    logger.info("Loaded %d samples with %d classes", len(texts), model_config.num_classes)
+
+    # Create dataloaders using utility function
+    train_dataloader, val_dataloader = create_dataloaders(
+        texts, 
+        labels, 
+        model_config, 
+        model_config.batch_size
     )
-    
-    # Initialize tokenizer with explicit clean_up_tokenization_spaces
-    tokenizer = BertTokenizer.from_pretrained(
-        config.bert_model_name,
-        clean_up_tokenization_spaces=True  # Explicitly set to avoid warning
-    )
-    
-    train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
-    val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
-    
-    # Create dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size)
     
     # Initialize model and trainer
-    model = BERTClassifier(config.bert_model_name, config.num_classes, classifier_config)
-    trainer = Trainer(model, config)
+    model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, clf_config)
+    trainer = Trainer(model, model_config)
     
     # Setup optimizer and scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=classifier_config.get('learning_rate', config.learning_rate),
-        weight_decay=classifier_config.get('weight_decay', 0.01)
+        lr=clf_config.get('learning_rate', model_config.learning_rate),
+        weight_decay=clf_config.get('weight_decay', 0.01)
     )
     
-    # Setup warmup scheduler
-    total_steps = len(train_dataloader) * config.num_epochs
-    warmup_steps = int(total_steps * 0.1)  # 10% warmup by default
+    total_steps = len(train_dataloader) * model_config.num_epochs
+    warmup_steps = int(total_steps * 0.1)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=warmup_steps,
         num_training_steps=total_steps
     )
     
-    # Initialize progress bars
-    epoch_pbar, batch_pbar = initialize_progress_bars(config.num_epochs, len(train_dataloader))
+    # Initialize progress bars using utility function
+    epoch_pbar, batch_pbar = initialize_progress_bars(model_config.num_epochs, len(train_dataloader))
     
     # Training loop
     best_score = 0.0
     try:
-        for epoch in range(config.num_epochs):
-            epoch_pbar.set_description(f"Epoch {epoch+1}/{config.num_epochs}")
+        for epoch in range(model_config.num_epochs):
+            epoch_pbar.set_description(f"Epoch {epoch+1}/{model_config.num_epochs}")
             
-            # Train with scheduler
             loss = trainer.train_epoch(train_dataloader, optimizer, scheduler, batch_pbar)
-            
-            # Evaluate
             score, _ = trainer.evaluate(val_dataloader)
             
-            # Update progress bar with metrics
             epoch_pbar.set_postfix({
                 'loss': f'{loss:.4f}',
-                f'val_{config.metric}': f'{score:.4f}'
+                f'val_{model_config.metric}': f'{score:.4f}'
             })
             epoch_pbar.update(1)
             
-            # Save best model
             if score > best_score:
                 best_score = score
-                trainer.save_checkpoint(
-                    config.model_save_path,
-                    epoch,
-                    optimizer
+                # Use utility function to save model state
+                save_model_state(
+                    model.state_dict(),
+                    model_config.model_save_path,
+                    score,
+                    {
+                        'epoch': epoch,
+                        'optimizer_state': optimizer.state_dict(),
+                        'classifier_config': clf_config,
+                        'num_classes': model_config.num_classes
+                    }
                 )
-                logger.info(f"\nSaved new best model with {config.metric}={score:.4f}")
+                logger.info("\nSaved new best model with %s=%.4f", model_config.metric, score)
     
     finally:
         epoch_pbar.close()
         batch_pbar.close()
         
-    logger.info(f"\nTraining completed. Best {config.metric}: {best_score:.4f}")
+    logger.info("\nTraining completed. Best %s: %.4f", model_config.metric, best_score)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -190,11 +154,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
+    # Remove logging.basicConfig as it's handled by logging_manager
     args = parse_args()
     config = ModelConfig.from_args(args)
     
