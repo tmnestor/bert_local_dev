@@ -43,6 +43,7 @@ def _create_study(name: str, storage: Optional[str] = None,
             n_startup_trials=10,
             n_ei_candidates=24,
             multivariate=True,
+            warn_independent_sampling=False,  # Suppress warnings
             seed=random_seed
         ),
         'random': optuna.samplers.RandomSampler(seed=random_seed),
@@ -149,40 +150,45 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
 def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
              best_model_info: Dict[str, Any], 
              trial_pbar: Optional[tqdm] = None, epoch_pbar: Optional[tqdm] = None) -> float:
+    # Base configuration parameters
+    arch_type = trial.suggest_categorical('architecture_type', ['standard', 'plane_resnet'])
+    batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
+    
     train_dataloader, val_dataloader = create_dataloaders(
         texts, 
         labels, 
-        model_config,  # Changed from config to model_config
-        trial.suggest_categorical('batch_size', [16, 32, 64])
+        model_config,
+        batch_size
     )
     
-    # Define hyperparameters
-    arch_type = trial.suggest_categorical('architecture_type', ['standard', 'plane_resnet'])
+    # Base classifier config
     classifier_config = {
         'architecture_type': arch_type,
+        'batch_size': batch_size,
+        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False]),
         'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True),
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-3, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64]),
-        'cls_pooling': trial.suggest_categorical('cls_pooling', [True, False])
     }
     
-    # Add architecture-specific parameters
+    # Architecture-specific parameters
     if arch_type == 'plane_resnet':
+        # PlaneResNet parameters (with prefix for grouping)
         classifier_config.update({
-            'num_planes': trial.suggest_int('num_planes', 4, 16),
-            'plane_width': trial.suggest_categorical('plane_width', [32, 64, 128, 256]),
-            'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2)
+            'num_planes': trial.suggest_int('plane/num_planes', 4, 16),
+            'plane_width': trial.suggest_categorical('plane/width', [32, 64, 128, 256]),
+            'warmup_ratio': trial.suggest_float('plane/warmup_ratio', 0.0, 0.2)
         })
     else:
+        # Standard architecture parameters (with prefix for grouping)
         classifier_config.update({
-            'num_layers': trial.suggest_int('num_layers', 1, 4),
-            'hidden_dim': trial.suggest_categorical('hidden_dim', [32, 64, 128, 256, 512, 1024]),
-            'activation': trial.suggest_categorical('activation', ['gelu', 'relu']),
-            'regularization': trial.suggest_categorical('regularization', ['dropout', 'batchnorm']),
-            'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.5),
-            'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.2)
+            'num_layers': trial.suggest_int('std/num_layers', 1, 4),
+            'hidden_dim': trial.suggest_categorical('std/hidden_dim', [32, 64, 128, 256, 512, 1024]),
+            'activation': trial.suggest_categorical('std/activation', ['gelu', 'relu']),
+            'regularization': trial.suggest_categorical('std/regularization', ['dropout', 'batchnorm']),
+            'dropout_rate': trial.suggest_float('std/dropout_rate', 0.1, 0.5),
+            'warmup_ratio': trial.suggest_float('std/warmup_ratio', 0.0, 0.2)
         })
-    
+
     # Create model and trainer
     model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, classifier_config)
     trainer = Trainer(model, model_config)
