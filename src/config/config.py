@@ -1,9 +1,10 @@
 from dataclasses import dataclass, fields, field
-from typing import Optional, Any, Union, List
+from typing import Optional, List
 from pathlib import Path
 import torch
 import argparse
 import logging
+import pickle
 
 from .base_config import BaseConfig
 
@@ -176,8 +177,8 @@ class ValidationConfig(ModelConfig):
         # Try to find best model if none specified
         if self.model_path is None:
             self.model_path = self._find_best_model()
-            if self.model_path is None:
-                raise ValueError("No model path specified and no best model found in best_trials_dir")
+        if self.model_path is None:
+            raise ValueError("No model path specified and no best model found in best_trials_dir")
         
         # If no test file specified, look for auto-split
         if self.test_file is None:
@@ -219,7 +220,7 @@ class ValidationConfig(ModelConfig):
     def _find_best_model(self) -> Optional[Path]:
         """Find best model from Optuna trials"""
         if not self.best_trials_dir.exists():
-            logger.warning(f"Best trials directory not found: {self.best_trials_dir}")
+            logger.warning("Best trials directory not found: %s", self.best_trials_dir)
             return None
             
         # First try to find best model file
@@ -228,7 +229,7 @@ class ValidationConfig(ModelConfig):
             # If no best model, try checkpoint file
             checkpoint = self.best_trials_dir / "bert_classifier.pth"
             if checkpoint.exists():
-                logger.info(f"Found checkpoint file: {checkpoint}")
+                logger.info("Found checkpoint file: %s", checkpoint)
                 return checkpoint
             logger.warning("No model files found in best trials directory")
             return None
@@ -247,14 +248,14 @@ class ValidationConfig(ModelConfig):
                 if score > best_score:
                     best_score = score
                     best_model = model_file
-                    logger.info(f"Found better model with score {score}: {model_file}")
-            except Exception as e:
-                logger.warning(f"Couldn't load {model_file}: {str(e)}")
+                    logger.info("Found better model with score %f: %s", score, model_file)
+            except (RuntimeError, FileNotFoundError, pickle.UnpicklingError) as e:
+                logger.warning("Couldn't load %s: %s", model_file, str(e))
                 continue
                 
         if best_model is None:
             logger.warning("No valid model found in best trials directory")
         else:
-            logger.info(f"Selected best model: {best_model}")
+            logger.info("Selected best model: %s", best_model)
             
         return best_model

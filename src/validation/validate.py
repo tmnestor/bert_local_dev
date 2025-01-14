@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import torch
 import pandas as pd
 from sklearn.metrics import classification_report
@@ -19,29 +19,29 @@ def find_test_split(data_dir: Path) -> Optional[Path]:
     test_split = data_dir / "test_split.csv"
     return test_split if test_split.exists() else None
 
-def load_model(config: ValidationConfig) -> BERTClassifier:
+def load_model(validation_config: ValidationConfig) -> BERTClassifier:
     """Load trained model from path"""
-    logger.info(f"Loading model from: {config.model_path}")
+    logger.info(f"Loading model from: {validation_config.model_path}")
     
     try:
-        checkpoint = torch.load(config.model_path, map_location=config.device, weights_only=False)
+        checkpoint = torch.load(validation_config.model_path, map_location=validation_config.device, weights_only=False)
         
         # Handle different save formats
         model_state = checkpoint.get('model_state_dict') or checkpoint.get('model_state')
         model_config = checkpoint.get('config') or checkpoint.get('classifier_config')
-        num_classes = checkpoint.get('num_classes', config.num_classes)
+        num_classes = checkpoint.get('num_classes', validation_config.num_classes)
         
         if not model_state or not model_config:
             raise ValueError("Invalid model checkpoint format")
             
         # Create and load model
         model = BERTClassifier(
-            model_config.get('bert_model_name', config.bert_model_name),
+            model_config.get('bert_model_name', validation_config.bert_model_name),
             num_classes,
             model_config
         )
         model.load_state_dict(model_state)
-        model.to(config.device)
+        model.to(validation_config.device)
         model.eval()
         
         logger.info("Model loaded successfully:")
@@ -52,16 +52,16 @@ def load_model(config: ValidationConfig) -> BERTClassifier:
     except Exception as e:
         raise RuntimeError(f"Error loading model: {str(e)}") from e
 
-def validate_model(config: ValidationConfig) -> Dict[str, float]:
+def validate_model(validation_config: ValidationConfig) -> Dict[str, float]:
     """Run validation on test data and compute metrics"""
     # Load test data
-    texts, labels, label_encoder = load_and_preprocess_data(config, validation_mode=True)
+    texts, labels, label_encoder = load_and_preprocess_data(validation_config, validation_mode=True)
     test_dataloader = create_dataloaders(
-        texts, labels, config, config.batch_size, validation_mode=True
+        texts, labels, validation_config, validation_config.batch_size, validation_mode=True
     )
     
     # Load model
-    model = load_model(config)
+    model = load_model(validation_config)
     
     results = []
     predictions = []
@@ -69,8 +69,8 @@ def validate_model(config: ValidationConfig) -> Dict[str, float]:
     with torch.no_grad():
         for batch in tqdm(test_dataloader, desc="Validating"):
             outputs = model(
-                input_ids=batch['input_ids'].to(config.device),
-                attention_mask=batch['attention_mask'].to(config.device)
+                input_ids=batch['input_ids'].to(validation_config.device),
+                attention_mask=batch['attention_mask'].to(validation_config.device)
             )
             _, preds = torch.max(outputs, dim=1)
             predictions.extend(preds.cpu().tolist())
@@ -81,16 +81,16 @@ def validate_model(config: ValidationConfig) -> Dict[str, float]:
             } for p, l, o in zip(preds.cpu(), batch['label'].cpu(), outputs.cpu())])
     
     # Calculate metrics
-    metrics = calculate_metrics(
+    validation_metrics = calculate_metrics(
         [r['true'] for r in results],
         [r['pred'] for r in results],
-        config.metrics
+        validation_config.metrics
     )
     
     # Save results if requested
-    if config.save_predictions:
-        pd.DataFrame(results).to_csv(config.output_dir / 'predictions.csv', index=False)
-        pd.DataFrame([metrics]).to_csv(config.output_dir / 'metrics.csv', index=False)
+    if validation_config.save_predictions:
+        pd.DataFrame(results).to_csv(validation_config.output_dir / 'predictions.csv', index=False)
+        pd.DataFrame([validation_metrics]).to_csv(validation_config.output_dir / 'metrics.csv', index=False)
         
         # Save detailed report
         report = classification_report(
@@ -98,9 +98,9 @@ def validate_model(config: ValidationConfig) -> Dict[str, float]:
             [r['pred'] for r in results],
             output_dict=True
         )
-        pd.DataFrame(report).to_csv(config.output_dir / 'classification_report.csv')
+        pd.DataFrame(report).to_csv(validation_config.output_dir / 'classification_report.csv')
     
-    return metrics
+    return validation_metrics
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(

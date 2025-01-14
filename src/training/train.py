@@ -18,6 +18,11 @@ from ..utils.logging_manager import setup_logger
 
 logger = setup_logger(__name__)
 
+def _log_best_configuration(best_file: Path, best_value: float) -> None:
+    """Log information about the best configuration"""
+    logger.info("Loaded best configuration from %s", best_file)
+    logger.info("Best trial score: %.4f", best_value)
+
 def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> dict:
     """Load best model configuration from optimization results"""
     pattern = f"best_trial_{study_name or '*'}.pt"
@@ -40,56 +45,52 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> di
             best_file = file
 
     if best_trial:
-        logger.info("Loaded best configuration from %s", best_file)
-        logger.info("Best trial score: %.4f", best_value)
+        _log_best_configuration(best_file, best_value)
         # Add default values for missing configuration keys
-        config = best_trial['params']
-        arch_type = config.get('architecture_type', 'standard')
+        trial_config = best_trial['params']
+        arch_type = trial_config.get('architecture_type', 'standard')
         
         if arch_type == 'standard':
-            config.update({
-                'num_layers': config.get('std/num_layers', 2),
-                'hidden_dim': config.get('std/hidden_dim', 256),
-                'activation': config.get('std/activation', 'gelu'),
-                'regularization': config.get('std/regularization', 'dropout'),
-                'dropout_rate': config.get('std/dropout_rate', 0.1),
-                'cls_pooling': config.get('cls_pooling', True),
+            trial_config.update({
+                'num_layers': trial_config.get('std/num_layers', 2),
+                'hidden_dim': trial_config.get('std/hidden_dim', 256),
+                'activation': trial_config.get('std/activation', 'gelu'),
+                'regularization': trial_config.get('std/regularization', 'dropout'),
+                'dropout_rate': trial_config.get('std/dropout_rate', 0.1),
+                'cls_pooling': trial_config.get('cls_pooling', True),
             })
         else:  # plane_resnet
-            config.update({
+            trial_config.update({
                 'architecture_type': 'plane_resnet',
-                'num_planes': config.get('plane/num_planes', 8),
-                'plane_width': config.get('plane/width', 128),
-                'cls_pooling': config.get('cls_pooling', True),
+                'num_planes': trial_config.get('plane/num_planes', 8),
+                'plane_width': trial_config.get('plane/width', 128),
+                'cls_pooling': trial_config.get('cls_pooling', True),
             })
             
-        return config
+        return trial_config
     return None
 
 def train_model(model_config: ModelConfig, clf_config: dict = None):
     """Train a model with fixed or optimized configuration"""
     # Try to load best configuration if none provided
     if clf_config is None:
-        clf_config = load_best_configuration(model_config.best_trials_dir)
-        
-        # Ensure we have a valid configuration
-        if clf_config is None:
+        clf_config = load_best_configuration(model_config.best_trials_dir) or {
+            'architecture_type': 'standard',
+            'num_layers': 2,
+            'hidden_dim': 256,
+            'learning_rate': model_config.learning_rate,
+            'weight_decay': 0.01,
+            'activation': 'gelu',
+            'regularization': 'dropout',
+            'dropout_rate': 0.1,
+            'cls_pooling': True,
+            'batch_size': model_config.batch_size
+        }
+        if clf_config.get('architecture_type') == 'standard':
             logger.info("\nNo previous optimization found. Using default configuration")
-            clf_config = {
-                'architecture_type': 'standard',
-                'num_layers': 2,
-                'hidden_dim': 256,
-                'learning_rate': model_config.learning_rate,
-                'weight_decay': 0.01,
-                'activation': 'gelu',
-                'regularization': 'dropout',
-                'dropout_rate': 0.1,
-                'cls_pooling': True,
-                'batch_size': model_config.batch_size
-            }
     
     # Load and preprocess data using utility function with train/val split
-    train_texts, val_texts, train_labels, val_labels, _ = load_and_preprocess_data(model_config)
+    train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
     logger.info("Loaded %d training and %d validation samples", 
                 len(train_texts), len(val_texts))
 

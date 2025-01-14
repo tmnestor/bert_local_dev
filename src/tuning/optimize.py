@@ -11,7 +11,6 @@ warnings.filterwarnings('ignore', category=ExperimentalWarning)
 import torch
 import time
 from datetime import datetime
-import logging
 import argparse
 from pathlib import Path
 from tqdm.auto import tqdm
@@ -82,11 +81,11 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
     logger.info("Starting optimization")
     logger.info("Number of trials: %s", n_trials or model_config.n_trials)
     
-    # Load data using utility function - updated for new return format
+    # Load data using utility function - updated to handle train/val split correctly
     logger.info("\nLoading data...")
     train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
     
-    # Combine train and validation data for optimization
+    # Combine train and validation sets for optimization trials
     texts = train_texts + val_texts
     labels = train_labels + val_labels
     
@@ -156,20 +155,20 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
 def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
              best_model_info: Dict[str, Any], 
              trial_pbar: Optional[tqdm] = None, epoch_pbar: Optional[tqdm] = None) -> float:
-    """Modified to handle the combined train/val data"""
-    # Create train/val split for this trial
+    """Modified to handle the combined data correctly"""
     arch_type = trial.suggest_categorical('architecture_type', ['standard', 'plane_resnet'])
     batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
     
+    # Create new train/val split for each trial
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
     )
     
     train_dataloader, val_dataloader = create_dataloaders(
-        [train_texts, val_texts],  # Pass as list for new format
-        [train_labels, val_labels],  # Pass as list for new format
+        [train_texts, val_texts],
+        [train_labels, val_labels],
         model_config,
-        trial.suggest_categorical('batch_size', [16, 32, 64])
+        batch_size
     )
     
     # Base classifier config
