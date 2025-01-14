@@ -12,40 +12,60 @@ import logging
 from ..config.config import ModelConfig 
 from ..training.dataset import TextClassificationDataset
 
-def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False) -> Tuple[List[str], List[int], LabelEncoder]:
-    """Load and preprocess data with train/val/test split
+def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False) -> Tuple[List[str], List[str], List[int], List[int], LabelEncoder]:
+    """Load and preprocess data with strict train/val/test split
+    
+    Strategy:
+    1. First split: 80% train+val, 20% test
+    2. Second split: 80% train, 20% validation (of the 80% from step 1)
     
     Args:
         config: ModelConfig instance
         validation_mode: If True, returns test set, otherwise returns train/val sets
     """
+    # Load all data
     df = pd.read_csv(config.data_file)
     le = LabelEncoder()
     texts = df['text'].tolist()
     labels = le.fit_transform(df["category"]).tolist()
     
-    # First split off test set (20% of data)
-    train_texts, test_texts, train_labels, test_labels = train_test_split(
-        texts, labels, test_size=0.2, random_state=42, stratify=labels
-    )
-    
-    # Save test split if it doesn't exist
+    # Check for existing test split
     test_split_path = config.data_file.parent / "test_split.csv"
-    if not test_split_path.exists():
+    
+    if test_split_path.exists():
+        # Load existing test split to ensure consistency
+        test_df = pd.read_csv(test_split_path)
+        test_texts = test_df['text'].tolist()
+        test_labels = le.transform(test_df['category'].tolist())
+        
+        # Remove test samples from main dataset
+        train_val_texts = [t for t in texts if t not in set(test_texts)]
+        train_val_labels = [l for t, l in zip(texts, labels) if t not in set(test_texts)]
+    else:
+        # Create initial train/test split
+        train_val_texts, test_texts, train_val_labels, test_labels = train_test_split(
+            texts, labels, test_size=0.2, random_state=42, stratify=labels
+        )
+        
+        # Save test split for future use
         test_df = pd.DataFrame({
             'text': test_texts,
-            'category': [le.inverse_transform([l])[0] for l in test_labels]
+            'category': le.inverse_transform(test_labels)
         })
         test_df.to_csv(test_split_path, index=False)
+        logger.info(f"Created and saved test split to {test_split_path}")
     
     if validation_mode:
+        logger.info(f"Using test set with {len(test_texts)} samples")
         return test_texts, test_labels, le
     
-    # For training, further split train into train/val (80/20 of remaining data)
+    # Create train/validation split
     train_texts, val_texts, train_labels, val_labels = train_test_split(
-        train_texts, train_labels, test_size=0.2, random_state=42, stratify=train_labels
+        train_val_texts, train_val_labels, test_size=0.2, 
+        random_state=42, stratify=train_val_labels
     )
     
+    logger.info(f"Split sizes: {len(train_texts)} train, {len(val_texts)} validation, {len(test_texts)} test")
     return train_texts, val_texts, train_labels, val_labels, le
 
 def create_dataloaders(

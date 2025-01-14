@@ -160,6 +160,39 @@ Notes:
 - CSV should use UTF-8 encoding
 - Text can contain quotes and commas (proper CSV escaping required)
 
+## Data Split Strategy
+
+### Split Ratios
+- Test Set: 20% (held out)
+- Training Set: 64% (80% of remaining)
+- Validation Set: 16% (20% of remaining)
+
+### Data Usage by Phase
+
+1. **Optimization Phase**
+   - Uses only training + validation data (80%)
+   - Creates new train/val splits for each trial
+   - Never sees test data
+   - Used to find best hyperparameters
+
+2. **Training Phase**
+   - Uses fixed train/val split
+   - Training on 64% of data
+   - Validation on 16% of data
+   - Used to train final model
+
+3. **Validation Phase**
+   - Uses held-out test set (20%)
+   - Only used for final evaluation
+   - Never used in training or optimization
+
+### Data Leakage Prevention
+- Test set is split first and saved separately
+- Test set is never used during optimization or training
+- Optimization trials create new splits from non-test data
+- Validation metrics only computed on appropriate split
+- Test set only loaded during final validation phase
+
 ## Architectures
 
 This framework provides two specialized classifier architectures for BERT embeddings:

@@ -152,9 +152,13 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
     logger.info("Saved best model to %s", final_model_path)
     logger.info("Best %s: %.4f", model_config.metric, best_model_info[metric_key])
 
-def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
+def objective(trial: optuna.Trial, 
+              model_config: ModelConfig, 
+              texts: List[str], 
+              labels: List[int],
              best_model_info: Dict[str, Any], 
-             trial_pbar: Optional[tqdm] = None, epoch_pbar: Optional[tqdm] = None) -> float:
+             trial_pbar: Optional[tqdm] = None, 
+             epoch_pbar: Optional[tqdm] = None) -> float:
     """Modified to handle the combined data correctly"""
     arch_type = trial.suggest_categorical('architecture_type', ['standard', 'plane_resnet'])
     batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
