@@ -100,7 +100,7 @@ Regularization: batchnorm
 
 ### Hyperparameter Optimization
 ```bash
-python -m src.optimize.optimize \
+python -m src.tuning.optimize \
     --bert_model_name "all-MiniLM-L6-v2" \
     --data_file "data/data.csv" \
     --n_trials 3 \
