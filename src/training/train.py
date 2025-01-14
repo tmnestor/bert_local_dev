@@ -33,7 +33,7 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> di
     best_file = None
 
     for file in trial_files:
-        trial_data = torch.load(file, weights_only=True)  # Add weights_only=True here
+        trial_data = torch.load(file, weights_only=False)  # Changed to False
         if trial_data['value'] > best_value:
             best_value = trial_data['value']
             best_trial = trial_data
@@ -42,7 +42,28 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> di
     if best_trial:
         logger.info("Loaded best configuration from %s", best_file)
         logger.info("Best trial score: %.4f", best_value)
-        return best_trial['params']
+        # Add default values for missing configuration keys
+        config = best_trial['params']
+        arch_type = config.get('architecture_type', 'standard')
+        
+        if arch_type == 'standard':
+            config.update({
+                'num_layers': config.get('std/num_layers', 2),
+                'hidden_dim': config.get('std/hidden_dim', 256),
+                'activation': config.get('std/activation', 'gelu'),
+                'regularization': config.get('std/regularization', 'dropout'),
+                'dropout_rate': config.get('std/dropout_rate', 0.1),
+                'cls_pooling': config.get('cls_pooling', True),
+            })
+        else:  # plane_resnet
+            config.update({
+                'architecture_type': 'plane_resnet',
+                'num_planes': config.get('plane/num_planes', 8),
+                'plane_width': config.get('plane/width', 128),
+                'cls_pooling': config.get('cls_pooling', True),
+            })
+            
+        return config
     return None
 
 def train_model(model_config: ModelConfig, clf_config: dict = None):
@@ -67,14 +88,15 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
                 'batch_size': model_config.batch_size
             }
     
-    # Load and preprocess data using utility function
-    texts, labels, _ = load_and_preprocess_data(model_config)
-    logger.info("Loaded %d samples with %d classes", len(texts), model_config.num_classes)
+    # Load and preprocess data using utility function with train/val split
+    train_texts, val_texts, train_labels, val_labels, _ = load_and_preprocess_data(model_config)
+    logger.info("Loaded %d training and %d validation samples", 
+                len(train_texts), len(val_texts))
 
     # Create dataloaders using utility function
     train_dataloader, val_dataloader = create_dataloaders(
-        texts, 
-        labels, 
+        [train_texts, val_texts], 
+        [train_labels, val_labels],
         model_config, 
         model_config.batch_size
     )

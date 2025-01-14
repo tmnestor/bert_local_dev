@@ -1,10 +1,14 @@
 from dataclasses import dataclass, fields, field
-from typing import Optional, Any, Union
+from typing import Optional, Any, Union, List
 from pathlib import Path
 import torch
 import argparse
+import logging
 
 from .base_config import BaseConfig
+
+# Add logger at module level
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelConfig(BaseConfig):
@@ -133,3 +137,124 @@ class ModelConfig(BaseConfig):
         # Final validation of n_trials
         if self.n_trials < 1:
             raise ValueError("n_trials must be positive")
+
+@dataclass
+class ValidationConfig(ModelConfig):
+    """Configuration for model validation."""
+    test_file: Optional[Path] = field(default=None)  # This can be None if using auto-split
+    output_dir: Path = field(default=Path("validation_results"))
+    model_path: Optional[Path] = field(default=None)  # Add this line
+    threshold: float = 0.5
+    metrics: List[str] = field(default_factory=lambda: ["accuracy", "f1", "precision", "recall"])
+    save_predictions: bool = True
+    
+    DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
+    
+    @classmethod
+    def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Add validation-specific command line arguments"""
+        # First add base model arguments
+        super().add_argparse_args(parser)
+        
+        # Then add validation-specific arguments
+        validation = parser.add_argument_group('Validation Configuration')
+        validation.add_argument('--test_file', type=Path, default=None,
+                              help='Path to test data CSV (default: automatic test split)')
+        validation.add_argument('--output_dir', type=Path, default=cls.output_dir,
+                              help='Directory to save validation results')
+        validation.add_argument('--threshold', type=float, default=cls.threshold,
+                              help='Classification threshold')
+        validation.add_argument('--metrics', nargs='+', type=str, 
+                              default=cls.DEFAULT_METRICS,
+                              choices=cls.DEFAULT_METRICS,
+                              help='Metrics to compute')
+        validation.add_argument('--save_predictions', type=bool, default=cls.save_predictions,
+                              help='Whether to save predictions to file')
+
+    def _resolve_paths(self) -> None:
+        """Resolve model and test file paths"""
+        # Try to find best model if none specified
+        if self.model_path is None:
+            self.model_path = self._find_best_model()
+            if self.model_path is None:
+                raise ValueError("No model path specified and no best model found in best_trials_dir")
+        
+        # If no test file specified, look for auto-split
+        if self.test_file is None:
+            test_split = self.data_file.parent / "test_split.csv"
+            if test_split.exists():
+                self.test_file = test_split
+            else:
+                raise ValueError("No test file specified and no test split found")
+
+    def validate(self) -> None:
+        """Validate validation configuration"""
+        # First validate base configuration
+        super().validate()
+        
+        # Resolve paths before validation
+        self._resolve_paths()
+        
+        # Then validate validation-specific fields
+        if self.threshold < 0 or self.threshold > 1:
+            raise ValueError("threshold must be between 0 and 1")
+        if not self.metrics:
+            raise ValueError("at least one metric must be specified")
+        if not isinstance(self.save_predictions, bool):
+            raise ValueError("save_predictions must be a boolean")
+        
+        # Create output directory
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Finally validate paths exist
+        self._validate_path_fields()
+
+    def _validate_path_fields(self) -> None:
+        if not self.model_path.exists():
+            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+        if not self.test_file.exists():
+            raise FileNotFoundError(f"Test file not found: {self.test_file}")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _find_best_model(self) -> Optional[Path]:
+        """Find best model from Optuna trials"""
+        if not self.best_trials_dir.exists():
+            logger.warning(f"Best trials directory not found: {self.best_trials_dir}")
+            return None
+            
+        # First try to find best model file
+        model_files = list(self.best_trials_dir.glob("best_model_*.pt"))
+        if not model_files:
+            # If no best model, try checkpoint file
+            checkpoint = self.best_trials_dir / "bert_classifier.pth"
+            if checkpoint.exists():
+                logger.info(f"Found checkpoint file: {checkpoint}")
+                return checkpoint
+            logger.warning("No model files found in best trials directory")
+            return None
+            
+        # Find the best performing model
+        best_model = None
+        best_score = float('-inf')
+        
+        for model_file in model_files:
+            try:
+                checkpoint = torch.load(model_file, map_location='cpu', weights_only=False)
+                score = checkpoint.get('f1_score', 
+                       checkpoint.get('accuracy_score',
+                       checkpoint.get('metric_value',
+                       float('-inf'))))
+                if score > best_score:
+                    best_score = score
+                    best_model = model_file
+                    logger.info(f"Found better model with score {score}: {model_file}")
+            except Exception as e:
+                logger.warning(f"Couldn't load {model_file}: {str(e)}")
+                continue
+                
+        if best_model is None:
+            logger.warning("No valid model found in best trials directory")
+        else:
+            logger.info(f"Selected best model: {best_model}")
+            
+        return best_model

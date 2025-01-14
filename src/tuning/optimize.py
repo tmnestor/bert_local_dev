@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Any
 import optuna
 from optuna._experimental import ExperimentalWarning
 import warnings
+from sklearn.model_selection import train_test_split  # Add this import
 # Silence specific Optuna warnings
 warnings.filterwarnings('ignore', category=ExperimentalWarning)
 
@@ -77,13 +78,18 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
                     storage: Optional[str] = None,
                     random_seed: Optional[int] = None,
                     n_trials: Optional[int] = None) -> Dict[str, Any]:
-    log_separator(logger)  # Replace logger.info("\n" + "="*50)
+    log_separator(logger)
     logger.info("Starting optimization")
     logger.info("Number of trials: %s", n_trials or model_config.n_trials)
     
-    # Load data using utility function
+    # Load data using utility function - updated for new return format
     logger.info("\nLoading data...")
-    texts, labels, _ = load_and_preprocess_data(model_config)
+    train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
+    
+    # Combine train and validation data for optimization
+    texts = train_texts + val_texts
+    labels = train_labels + val_labels
+    
     logger.info("Loaded %d samples with %d classes", len(texts), model_config.num_classes)
     
     logger.info("Model config:")
@@ -150,15 +156,20 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
 def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
              best_model_info: Dict[str, Any], 
              trial_pbar: Optional[tqdm] = None, epoch_pbar: Optional[tqdm] = None) -> float:
-    # Base configuration parameters
+    """Modified to handle the combined train/val data"""
+    # Create train/val split for this trial
     arch_type = trial.suggest_categorical('architecture_type', ['standard', 'plane_resnet'])
     batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
     
+    train_texts, val_texts, train_labels, val_labels = train_test_split(
+        texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
+    )
+    
     train_dataloader, val_dataloader = create_dataloaders(
-        texts, 
-        labels, 
+        [train_texts, val_texts],  # Pass as list for new format
+        [train_labels, val_labels],  # Pass as list for new format
         model_config,
-        batch_size
+        trial.suggest_categorical('batch_size', [16, 32, 64])
     )
     
     # Base classifier config

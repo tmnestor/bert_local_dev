@@ -28,7 +28,25 @@ bert_local_dev/
 
 ## Usage
 
-### Training Modes
+The system operates in three phases:
+
+1. **Hyperparameter Optimization** - Find best model configuration
+2. **Model Training** - Train model with best or specified configuration
+3. **Model Validation** - Evaluate model on held-out test set
+
+### 1. Hyperparameter Optimization
+```bash
+python -m src.tuning.optimize \
+    --bert_model_name "all-MiniLM-L6-v2" \
+    --data_file "data/data.csv" \
+    --n_trials 3 \
+    --study_name "bert_optimization" \
+    --metric f1
+```
+
+### 2. Model Training
+
+#### Training Modes
 
 The training script supports three modes of operation:
 
@@ -98,14 +116,12 @@ Activation: relu
 Regularization: batchnorm
 ```
 
-### Hyperparameter Optimization
+### 3. Model Validation
 ```bash
-python -m src.tuning.optimize \
+python -m src.training.validate \
     --bert_model_name "all-MiniLM-L6-v2" \
-    --data_file "data/data.csv" \
-    --n_trials 3 \
-    --study_name "bert_optimization" \
-    --metric f1
+    --data_file "data/test_data.csv" \
+    --checkpoint_path "checkpoints/best_model.pt"
 ```
 
 ### Direct Training
