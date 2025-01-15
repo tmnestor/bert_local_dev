@@ -375,3 +375,8 @@ See nlp_env.yml for complete list. Key requirements:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Model Evaluation
+
+Use the dedicated evaluator to assess model performance:
+```
