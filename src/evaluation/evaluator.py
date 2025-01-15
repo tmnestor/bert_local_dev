@@ -1,11 +1,12 @@
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
+import argparse
 import torch
 import pandas as pd
 from sklearn.metrics import classification_report
 from tqdm.auto import tqdm
 
-from ..config.config import EvaluationConfig  # Update import to use EvaluationConfig
+from ..config.config import EvaluationConfig, ModelConfig
 from ..models.model import BERTClassifier
 from ..utils.metrics import calculate_metrics
 from ..utils.train_utils import load_and_preprocess_data, create_dataloaders
@@ -18,7 +19,7 @@ class ModelEvaluator:
     
     DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
     
-    def __init__(self, model_path: Path, config: ModelConfig):
+    def __init__(self, model_path: Path, config: Union[EvaluationConfig, ModelConfig]):
         self.model_path = Path(model_path)
         self.config = config
         self.device = torch.device(config.device)
@@ -179,6 +180,16 @@ class ModelEvaluator:
             config=config
         )
 
+    @classmethod
+    def add_model_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Add model-specific arguments"""
+        model_args = parser.add_argument_group('Model Configuration')
+        model_args.add_argument('--device', type=str, default='cpu',
+                              choices=['cpu', 'cuda'],
+                              help='Device to use for inference')
+        model_args.add_argument('--batch_size', type=int, default=32,
+                              help='Batch size for evaluation')
+
 def main():
     """CLI entry point"""
     import argparse
@@ -192,10 +203,16 @@ def main():
                        default=ModelEvaluator.DEFAULT_METRICS,
                        choices=ModelEvaluator.DEFAULT_METRICS,
                        help='Metrics to compute')
-    ModelEvaluator.add_model_args(parser)  # Add any additional model arguments
+    ModelEvaluator.add_model_args(parser)
     
     args = parser.parse_args()
-    config = EvaluationConfig.from_args(args)
+    
+    config = EvaluationConfig()
+    config.best_model = args.best_model
+    config.output_dir = args.output_dir
+    config.metrics = args.metrics
+    config.device = args.device
+    config.batch_size = args.batch_size
     
     try:
         logger.info(f"Loading model from: {config.best_model}")
