@@ -1,40 +1,51 @@
 # BERT Text Classifier
 
-A modular BERT-based text classification system with hyperparameter optimization.
+A production-ready BERT-based text classification system with automated hyperparameter optimization, data management, and evaluation.
 
-## Configuration System
+## Key Features
 
-The project uses a robust configuration system based on dataclasses with validation, serialization, and inheritance support.
+- **Automated Hyperparameter Optimization**
+  - Optuna-based optimization framework
+  - Multiple sampling strategies (TPE, Random, CMA-ES, QMC)
+  - Early stopping with HyperbandPruner
+  - Experiment tracking and persistence
 
-### Basic Usage
+- **Robust Data Management**
+  - Automatic train/validation/test splitting (60/20/20)
+  - Persistent storage of splits
+  - Consistent label encoding
+  - Prevention of data leakage
 
-## Project Structure
+- **Flexible Model Architectures**
+  - Standard BERT Classifier
+  - PlaneResNet Architecture
+  - Configurable model components
+  - Automatic architecture selection
 
+- **Comprehensive Evaluation**
+  - Multiple metrics (Accuracy, F1, Precision, Recall)
+  - Confusion matrix analysis
+  - Detailed classification reports
+  - Confidence scoring
+
+- **Production Features**
+  - Structured logging system
+  - Model checkpointing
+  - Configuration validation
+  - Error handling
+
+## Quick Start
+
+1. **Install Dependencies**
+```bash
+# Create environment
+conda env create -f nlp_env.yml
+
+# Optional: Clean reinstall
+conda env remove -n nlp_env -y && conda env create -f nlp_env.yml
 ```
-bert_local_dev/
-├── src/
-│   ├── models/
-│   │   ├── model.py          # BERTClassifier with PlaneResNet implementation
-│   │   └── bert_classifier.py # High-level classifier interface
-│   ├── training/
-│   │   ├── trainer.py        # Training loop and evaluation logic
-│   │   └── dataset.py        # TextClassificationDataset implementation
-│   ├── optimize/
-│   │   └── optimize.py       # Optuna optimization framework
-│   └── config/              # Configuration management
-├── all-MiniLM-L6-v2/       # Model files
-└── nlp_env.yml             # Conda environment specification
-```
 
-## Usage
-
-The system operates in three phases:
-
-1. **Hyperparameter Optimization** - Find best model configuration
-2. **Model Training** - Train model with best or specified configuration
-3. **Model Validation** - Evaluate model on held-out test set
-
-### 1. Hyperparameter Optimization
+2. **Hyperparameter Optimization**
 ```bash
 python -m src.tuning.optimize \
     --bert_model_name "all-MiniLM-L6-v2" \
@@ -44,7 +55,7 @@ python -m src.tuning.optimize \
     --metric f1
 ```
 
-### 2. Model Training
+3. **Model Training**
 
 #### Training Modes
 
@@ -116,7 +127,7 @@ Activation: relu
 Regularization: batchnorm
 ```
 
-### 3. Model Validation
+4. **Model Validation**
 ```bash
 python -m src.training.validate \
     --bert_model_name "all-MiniLM-L6-v2" \
@@ -124,7 +135,7 @@ python -m src.training.validate \
     --checkpoint_path "checkpoints/best_model.pt"
 ```
 
-### Direct Training
+5. **Direct Training**
 For training with fixed configuration:
 ```bash
 python -m src.training.train \
