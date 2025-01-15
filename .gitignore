@@ -71,4 +71,4 @@ env/
 
 # BERT MODELS
 
-all-MiniLM-L6-v2
+bert_encoder/

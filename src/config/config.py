@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelConfig(BaseConfig):
-    bert_model_name: str = './all-MiniLM-L6-v2'
+    bert_model_name: str = './bert_encoder'  # Update default value
     num_classes: int = 5
     max_length: int = 128
     batch_size: int = 16
