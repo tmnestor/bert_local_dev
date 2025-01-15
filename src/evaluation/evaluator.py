@@ -67,9 +67,46 @@ class ModelEvaluator:
             model.to(self.device)
             model.eval()
             
-            logger.info("Model loaded successfully:")
-            logger.info(f"Architecture: {model_config.get('architecture_type', 'standard')}")
-            logger.info(f"Number of classes: {num_classes}")
+            # Enhanced logging of model architecture
+            logger.info("\nModel Architecture Details:")
+            logger.info("-" * 50)
+            logger.info(f"BERT Model: {self.config.bert_model_name}")
+            logger.info(f"Architecture Type: {model_config['architecture_type']}")
+            logger.info(f"Number of Classes: {num_classes}")
+            logger.info(f"CLS Pooling: {model_config['cls_pooling']}")
+            
+            if model_config['architecture_type'] == 'standard':
+                logger.info("\nStandard Classifier Configuration:")
+                logger.info(f"Number of Layers: {model_config['num_layers']}")
+                logger.info(f"Hidden Dimension: {model_config['hidden_dim']}")
+                logger.info(f"Activation: {model_config['activation']}")
+                logger.info(f"Regularization: {model_config['regularization']}")
+                if model_config['regularization'] == 'dropout':
+                    logger.info(f"Dropout Rate: {model_config['dropout_rate']}")
+                
+                # Log layer sizes
+                input_size = model.bert.config.hidden_size
+                logger.info("\nLayer Dimensions:")
+                logger.info(f"Input (BERT) -> {input_size}")
+                
+                # Calculate and log progression of layer sizes
+                current_size = input_size
+                if model_config['num_layers'] > 1:
+                    ratio = (model_config['hidden_dim'] / current_size) ** (1.0 / (model_config['num_layers'] - 1))
+                    for i in range(model_config['num_layers'] - 1):
+                        current_size = int(current_size * ratio)
+                        current_size = max(current_size, model_config['hidden_dim'])
+                        logger.info(f"Hidden Layer {i+1} -> {current_size}")
+                logger.info(f"Output Layer -> {num_classes}")
+                
+            else:  # plane_resnet
+                logger.info("\nPlaneResNet Configuration:")
+                logger.info(f"Number of Planes: {model_config['num_planes']}")
+                logger.info(f"Plane Width: {model_config['plane_width']}")
+                logger.info(f"Input Size: {model.bert.config.hidden_size}")
+                logger.info(f"Output Size: {num_classes}")
+            
+            logger.info("-" * 50)
             
             return model
             

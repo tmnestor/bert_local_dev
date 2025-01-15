@@ -44,8 +44,7 @@ bert_local_dev/
 │   │   └── config.py           # Model and evaluation configs
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── model.py            # BERT classifier architectures
-│   │   └── bert_classifier.py  # High-level classifier interface
+│   │   └── model.py            # BERT classifier architectures
 │   ├── training/
 │   │   ├── __init__.py
 │   │   ├── train.py           # Training script

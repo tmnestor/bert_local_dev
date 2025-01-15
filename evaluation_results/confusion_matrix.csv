@@ -1,7 +1,7 @@
 true_label,business,entertainment,politics,sport,tech,All
-business,92,1,3,4,2,102
-entertainment,0,76,1,0,0,77
-politics,2,2,77,0,3,84
-sport,0,1,0,101,0,102
-tech,0,4,0,0,76,80
-All,94,84,81,105,81,445
+business,95,1,2,2,2,102
+entertainment,0,75,0,0,2,77
+politics,4,1,76,0,3,84
+sport,0,0,0,102,0,102
+tech,1,3,0,0,76,80
+All,100,80,78,104,83,445
