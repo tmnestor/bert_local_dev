@@ -12,6 +12,7 @@ import logging
 from ..config.config import ModelConfig 
 from ..training.dataset import TextClassificationDataset
 from ..utils.logging_manager import setup_logger
+from .data_splitter import DataSplitter, DataSplit
 
 # Add logger initialization
 logger = setup_logger(__name__)
@@ -20,60 +21,30 @@ def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False)
     Tuple[List[str], List[str], List[int], List[int], LabelEncoder],  # Training mode
     Tuple[List[str], List[int], LabelEncoder]  # Validation mode
 ]:
-    """Load and preprocess data with strict train/val/test split
+    """Load and preprocess data using DataSplitter"""
+    splitter = DataSplitter(config.data_file.parent)
     
-    Args:
-        config: ModelConfig instance
-        validation_mode: If True, returns test set, otherwise returns train/val sets
-        
-    Returns:
-        Training mode: (train_texts, val_texts, train_labels, val_labels, label_encoder)
-        Validation mode: (test_texts, test_labels, label_encoder)
-    """
-    # Load all data
-    df = pd.read_csv(config.data_file)
-    le = LabelEncoder()
-    texts = df['text'].tolist()
-    labels = le.fit_transform(df["category"]).tolist()
-    
-    # Check for existing test split
-    test_split_path = config.data_file.parent / "test_split.csv"
-    
-    if test_split_path.exists():
-        # Load existing test split to ensure consistency
-        test_df = pd.read_csv(test_split_path)
-        test_texts = test_df['text'].tolist()
-        test_labels = le.transform(test_df['category'].tolist())
-        
-        # Remove test samples from main dataset
-        train_val_texts = [t for t in texts if t not in set(test_texts)]
-        train_val_labels = [l for t, l in zip(texts, labels) if t not in set(test_texts)]
-    else:
-        # Create initial train/test split
-        train_val_texts, test_texts, train_val_labels, test_labels = train_test_split(
-            texts, labels, test_size=0.2, random_state=42, stratify=labels
-        )
-        
-        # Save test split for future use
-        test_df = pd.DataFrame({
-            'text': test_texts,
-            'category': le.inverse_transform(test_labels)
-        })
-        test_df.to_csv(test_split_path, index=False)
-        logger.info(f"Created and saved test split to {test_split_path}")
+    try:
+        # Try to load existing splits first
+        splits = splitter.load_splits()
+        logger.info("Using existing data splits")
+    except FileNotFoundError:
+        # Create new splits if they don't exist
+        logger.info("Creating new data splits...")
+        splits = splitter.create_splits(config.data_file)
     
     if validation_mode:
-        logger.info(f"Using test set with {len(test_texts)} samples")
-        return test_texts, test_labels, le
+        logger.info(f"Using test set with {len(splits.test_texts)} samples")
+        return splits.test_texts, splits.test_labels, splits.label_encoder
     
-    # Create train/validation split
-    train_texts, val_texts, train_labels, val_labels = train_test_split(
-        train_val_texts, train_val_labels, test_size=0.2, 
-        random_state=42, stratify=train_val_labels
+    logger.info(f"Split sizes: {len(splits.train_texts)} train, {len(splits.val_texts)} validation")
+    return (
+        splits.train_texts,
+        splits.val_texts,
+        splits.train_labels,
+        splits.val_labels,
+        splits.label_encoder
     )
-    
-    logger.info(f"Split sizes: {len(train_texts)} train, {len(val_texts)} validation, {len(test_texts)} test")
-    return train_texts, val_texts, train_labels, val_labels, le
 
 def create_dataloaders(
     texts: List[str], 
@@ -82,24 +53,31 @@ def create_dataloaders(
     batch_size: int,
     validation_mode: bool = False
 ) -> Union[Tuple[DataLoader, DataLoader], DataLoader]:
-    """Create train/val dataloaders or test dataloader"""
+    """Create dataloaders from texts and labels"""
     tokenizer = BertTokenizer.from_pretrained(
         config.bert_model_name,
         clean_up_tokenization_spaces=True
     )
     
     if validation_mode:
-        # Create single test dataloader
+        # For validation/test, texts and labels are direct lists
         test_dataset = TextClassificationDataset(texts, labels, tokenizer, config.max_length)
         return DataLoader(test_dataset, batch_size=batch_size)
     
-    # For training, we expect train/val splits
-    train_texts, val_texts = texts[0], texts[1]
-    train_labels, val_labels = labels[0], labels[1]
+    # For training, texts and labels are passed as lists containing train and val splits
+    if not isinstance(texts, (list, tuple)) or len(texts) != 2:
+        raise ValueError("Expected texts to be a list/tuple of [train_texts, val_texts]")
+    if not isinstance(labels, (list, tuple)) or len(labels) != 2:
+        raise ValueError("Expected labels to be a list/tuple of [train_labels, val_labels]")
     
+    train_texts, val_texts = texts
+    train_labels, val_labels = labels
+    
+    # Create datasets
     train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
     val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
     
+    # Create and return dataloaders
     return (
         DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
         DataLoader(val_dataset, batch_size=batch_size)
