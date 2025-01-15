@@ -28,7 +28,10 @@ class ModelConfig(BaseConfig):
     n_experiments: int = 1  # Number of experiments to run
     trials_per_experiment: Optional[int] = field(default=None)  # Make explicitly Optional with field
     sampler: str = 'tpe'  # Default sampler is 'tpe'
-    metric: str = 'f1'  # Default to F1 score for model assessment
+    metric: str = 'f1'  # Single metric for training/optimization
+    metrics: List[str] = field(  # Multiple metrics for evaluation
+        default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
+    )
 
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
