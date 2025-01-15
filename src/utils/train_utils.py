@@ -11,17 +11,24 @@ import logging
 
 from ..config.config import ModelConfig 
 from ..training.dataset import TextClassificationDataset
+from ..utils.logging_manager import setup_logger
 
-def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False) -> Tuple[List[str], List[str], List[int], List[int], LabelEncoder]:
+# Add logger initialization
+logger = setup_logger(__name__)
+
+def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False) -> Union[
+    Tuple[List[str], List[str], List[int], List[int], LabelEncoder],  # Training mode
+    Tuple[List[str], List[int], LabelEncoder]  # Validation mode
+]:
     """Load and preprocess data with strict train/val/test split
-    
-    Strategy:
-    1. First split: 80% train+val, 20% test
-    2. Second split: 80% train, 20% validation (of the 80% from step 1)
     
     Args:
         config: ModelConfig instance
         validation_mode: If True, returns test set, otherwise returns train/val sets
+        
+    Returns:
+        Training mode: (train_texts, val_texts, train_labels, val_labels, label_encoder)
+        Validation mode: (test_texts, test_labels, label_encoder)
     """
     # Load all data
     df = pd.read_csv(config.data_file)

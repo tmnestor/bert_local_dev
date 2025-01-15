@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+from typing import Optional
 import torch
 from transformers import get_linear_schedule_with_warmup
 
@@ -23,7 +24,7 @@ def _log_best_configuration(best_file: Path, best_value: float) -> None:
     logger.info("Loaded best configuration from %s", best_file)
     logger.info("Best trial score: %.4f", best_value)
 
-def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> dict:
+def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> Optional[dict]:
     """Load best model configuration from optimization results"""
     pattern = f"best_trial_{study_name or '*'}.pt"
     trial_files = list(best_trials_dir.glob(pattern))
@@ -38,43 +39,53 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> di
     best_file = None
 
     for file in trial_files:
-        trial_data = torch.load(file, weights_only=False)  # Changed to False
-        if trial_data['value'] > best_value:
-            best_value = trial_data['value']
-            best_trial = trial_data
-            best_file = file
+        try:
+            trial_data = torch.load(file, map_location='cpu', weights_only=False)
+            if trial_data['value'] > best_value:
+                best_value = trial_data['value']
+                best_trial = trial_data
+                best_file = file
+        except Exception as e:
+            logger.warning(f"Could not load trial file {file}: {e}")
+            continue
 
     if best_trial:
         _log_best_configuration(best_file, best_value)
-        # Add default values for missing configuration keys
-        trial_config = best_trial['params']
-        arch_type = trial_config.get('architecture_type', 'standard')
-        
-        if arch_type == 'standard':
-            trial_config.update({
-                'num_layers': trial_config.get('std/num_layers', 2),
-                'hidden_dim': trial_config.get('std/hidden_dim', 256),
-                'activation': trial_config.get('std/activation', 'gelu'),
-                'regularization': trial_config.get('std/regularization', 'dropout'),
-                'dropout_rate': trial_config.get('std/dropout_rate', 0.1),
-                'cls_pooling': trial_config.get('cls_pooling', True),
-            })
-        else:  # plane_resnet
-            trial_config.update({
-                'architecture_type': 'plane_resnet',
-                'num_planes': trial_config.get('plane/num_planes', 8),
-                'plane_width': trial_config.get('plane/width', 128),
-                'cls_pooling': trial_config.get('cls_pooling', True),
-            })
+        # Return the actual configuration
+        if 'params' in best_trial:
+            config = best_trial['params']
+            # Add default values for missing configuration keys
+            arch_type = config.get('architecture_type', 'standard')
             
-        return trial_config
+            if arch_type == 'standard':
+                config.update({
+                    'num_layers': config.get('std/num_layers', 2),
+                    'hidden_dim': config.get('std/hidden_dim', 256),
+                    'activation': config.get('std/activation', 'gelu'),
+                    'regularization': config.get('std/regularization', 'dropout'),
+                    'dropout_rate': config.get('std/dropout_rate', 0.1),
+                    'cls_pooling': config.get('cls_pooling', True),
+                })
+            else:  # plane_resnet
+                config.update({
+                    'architecture_type': 'plane_resnet',
+                    'num_planes': config.get('plane/num_planes', 8),
+                    'plane_width': config.get('plane/width', 128),
+                    'cls_pooling': config.get('cls_pooling', True),
+                })
+            return config
+
+    logger.info("\nNo previous optimization found. Using default configuration")
     return None
 
 def train_model(model_config: ModelConfig, clf_config: dict = None):
     """Train a model with fixed or optimized configuration"""
-    # Try to load best configuration if none provided
     if clf_config is None:
-        clf_config = load_best_configuration(model_config.best_trials_dir) or {
+        clf_config = load_best_configuration(model_config.best_trials_dir)
+        
+    if clf_config is None:
+        logger.info("Using default configuration")
+        clf_config = {
             'architecture_type': 'standard',
             'num_layers': 2,
             'hidden_dim': 256,
@@ -86,8 +97,6 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
             'cls_pooling': True,
             'batch_size': model_config.batch_size
         }
-        if clf_config.get('architecture_type') == 'standard':
-            logger.info("\nNo previous optimization found. Using default configuration")
     
     # Load and preprocess data using utility function with train/val split
     train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
