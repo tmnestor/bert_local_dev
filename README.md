@@ -48,7 +48,7 @@ conda env remove -n nlp_env -y && conda env create -f nlp_env.yml
 2. **Hyperparameter Optimization**
 ```bash
 python -m src.tuning.optimize \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/data.csv" \
     --n_trials 3 \
     --study_name "bert_optimization" \
@@ -65,7 +65,7 @@ The training script supports three modes of operation:
 ```bash
 # Automatically uses best configuration from previous optimization runs
 python -m src.training.train \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/data.csv"
 ```
 
@@ -73,7 +73,7 @@ python -m src.training.train \
 ```bash
 # Uses standard architecture with default settings
 python -m src.training.train \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/data.csv" \
     --architecture "standard"  # Forces standard architecture
 ```
@@ -82,7 +82,7 @@ python -m src.training.train \
 ```bash
 # Example: Custom standard architecture
 python -m src.training.train \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/data.csv" \
     --architecture "standard" \
     --num_layers 3 \
@@ -92,7 +92,7 @@ python -m src.training.train \
 
 # Example: Custom PlaneResNet architecture
 python -m src.training.train \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/data.csv" \
     --architecture "plane_resnet" \
     --num_planes 8 \
@@ -130,7 +130,7 @@ Regularization: batchnorm
 4. **Model Validation**
 ```bash
 python -m src.training.validate \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/test_data.csv" \
     --checkpoint_path "checkpoints/best_model.pt"
 ```
@@ -139,7 +139,7 @@ python -m src.training.validate \
 For training with fixed configuration:
 ```bash
 python -m src.training.train \
-    --bert_model_name "all-MiniLM-L6-v2" \
+    --bert_model_name "bert_encoder" \
     --data_file "data/data.csv" \
     --architecture "standard" \
     --learning_rate 2e-5 \
@@ -232,7 +232,7 @@ A configurable deep neural network that processes BERT embeddings through sequen
 - **Adaptive Pooling**: CLS token or mean pooling strategies
 
 #### Architecture Details
-1. Input layer processes BERT embeddings (768 dimensions)
+1. Input layer processes BERT embeddings (384 dimensions)
 2. Configurable hidden layers with:
    - Linear transformation
    - Activation function (GELU/ReLU)
