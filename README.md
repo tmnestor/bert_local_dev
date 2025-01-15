@@ -105,7 +105,7 @@ python -m src.tuning.optimize \
 ### 3. Model Evaluation
 ```bash
 python -m src.evaluation.evaluator \
-    --best_model "models/best_model.pt" \
+    --best_model "best_trials/bert_classifier.pth" \
     --output_dir "evaluation_results"
 ```
 
@@ -230,16 +230,3 @@ Common issues and solutions:
 ## License
 
 MIT License - See LICENSE file for details
-
-## Citation
-
-If you use this framework in your research, please cite:
-
-```bibtex
-@software{bert_classification_framework,
-    title = {BERT Text Classification Framework},
-    year = {2023},
-    author = {Framework Authors},
-    url = {https://github.com/username/repo}
-}
-```

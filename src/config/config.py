@@ -11,6 +11,8 @@ from .base_config import BaseConfig
 # Add logger at module level
 logger = logging.getLogger(__name__)
 
+VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
+
 @dataclass
 class ModelConfig(BaseConfig):
     bert_model_name: str = './bert_encoder'  # Update default value
@@ -32,6 +34,27 @@ class ModelConfig(BaseConfig):
     metrics: List[str] = field(  # Multiple metrics for evaluation
         default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
     )
+
+    def _validate_metrics(self, metrics: List[str]) -> None:
+        """Validate metrics configuration"""
+        if metrics is None:
+            self.metrics = ["accuracy", "f1", "precision", "recall"]  # Set default if None
+            return
+            
+        if not isinstance(metrics, list):
+            raise ValueError("metrics must be a list")
+            
+        invalid_metrics = set(metrics) - VALID_METRICS
+        if invalid_metrics:
+            raise ValueError(f"Invalid metrics: {invalid_metrics}. Valid options are: {VALID_METRICS}")
+
+    def _validate_metric(self, metric: str) -> None:
+        """Validate primary metric"""
+        if self.metrics is None:
+            self._validate_metrics(None)  # Initialize defaults if needed
+            
+        if metric not in VALID_METRICS:
+            raise ValueError(f"Primary metric '{metric}' must be one of {VALID_METRICS}")
 
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -94,7 +117,12 @@ class ModelConfig(BaseConfig):
 
     def validate(self) -> None:
         """Extended validation with parent validation"""
-        super().validate()  # Call parent validation first
+        # Validate metrics first to ensure they're initialized
+        self._validate_metrics(self.metrics)
+        # Then validate the primary metric
+        self._validate_metric(self.metric)
+        # Finally call parent validation
+        super().validate()
         
         # Model-specific validation
         self._validate_training_params()
