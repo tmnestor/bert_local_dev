@@ -1,382 +1,245 @@
-# BERT Text Classifier
+# BERT Text Classification Framework
 
-A production-ready BERT-based text classification system with automated hyperparameter optimization, data management, and evaluation.
+A production-ready framework for BERT-based text classification with automated optimization, comprehensive evaluation, and flexible architectures.
 
-## Key Features
+## Features
 
-- **Automated Hyperparameter Optimization**
-  - Optuna-based optimization framework
-  - Multiple sampling strategies (TPE, Random, CMA-ES, QMC)
-  - Early stopping with HyperbandPruner
-  - Experiment tracking and persistence
+### Core Capabilities
+- 🚀 Two optimized classifier architectures (Standard and PlaneResNet)
+- 📊 Automated hyperparameter optimization with Optuna
+- 📈 Comprehensive evaluation metrics and reporting
+- 🔄 Robust data management and validation
+- 📝 Structured logging and error handling
 
-- **Robust Data Management**
-  - Automatic train/validation/test splitting (60/20/20)
-  - Persistent storage of splits
-  - Consistent label encoding
-  - Prevention of data leakage
+### Architecture Support
+- **Standard Classifier**: Configurable deep neural network
+- **PlaneResNet**: Innovative parallel residual architecture
+- **BERT Integration**: Efficient handling of BERT embeddings
+- **Flexible Pooling**: CLS token or mean pooling strategies
 
-- **Flexible Model Architectures**
-  - Standard BERT Classifier
-  - PlaneResNet Architecture
-  - Configurable model components
-  - Automatic architecture selection
+### Data Management
+- Automated train/val/test splitting (60/20/20)
+- Data leakage prevention
+- Persistent storage of splits
+- Label encoding and validation
 
-- **Comprehensive Evaluation**
-  - Multiple metrics (Accuracy, F1, Precision, Recall)
-  - Confusion matrix analysis
-  - Detailed classification reports
-  - Confidence scoring
+## Installation
 
-- **Production Features**
-  - Structured logging system
-  - Model checkpointing
-  - Configuration validation
-  - Error handling
+```bash
+# Create new environment
+conda env create -f nlp_env.yml
+
+# Update existing environment
+conda env update -f nlp_env.yml --prune
+```
+
+## Project Structure
+
+```
+bert_local_dev/
+├── src/
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── base_config.py      # Base configuration class
+│   │   └── config.py           # Model and evaluation configs
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── model.py            # BERT classifier architectures
+│   │   └── bert_classifier.py  # High-level classifier interface
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── train.py           # Training script
+│   │   ├── trainer.py         # Training logic
+│   │   ├── dataset.py         # Dataset classes
+│   │   └── validate.py        # Validation script
+│   ├── tuning/
+│   │   ├── __init__.py
+│   │   └── optimize.py        # Hyperparameter optimization
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   └── evaluator.py       # Model evaluation
+│   └── utils/
+│       ├── __init__.py
+│       ├── data_splitter.py   # Data management
+│       ├── logging_manager.py # Logging setup
+│       ├── metrics.py         # Evaluation metrics
+│       └── train_utils.py     # Training utilities
+├── tests/                     # Unit tests
+├── logs/                      # Training logs
+├── models/                    # Saved models
+├── data/                      # Dataset storage
+├── evaluation_results/        # Evaluation outputs
+├── nlp_env.yml               # Environment specification
+├── README.md                 # Project documentation
+└── LICENSE                   # License file
+```
+
+### Key Components
+
+- **src/config/**: Configuration management and validation
+- **src/models/**: Model architectures and implementations
+- **src/training/**: Training pipeline and utilities
+- **src/tuning/**: Hyperparameter optimization framework
+- **src/evaluation/**: Evaluation tools and metrics
+- **src/utils/**: Common utilities and helpers
 
 ## Quick Start
 
-1. **Install Dependencies**
+### 1. Basic Training
 ```bash
-# Create environment
-conda env create -f nlp_env.yml
-
-# Optional: Clean reinstall
-conda env remove -n nlp_env -y && conda env create -f nlp_env.yml
+python -m src.training.train \
+    --data_file "data/dataset.csv" \
+    --bert_model_name "bert-base-uncased" \
+    --architecture "standard"
 ```
 
-2. **Hyperparameter Optimization**
+### 2. Hyperparameter Optimization
 ```bash
 python -m src.tuning.optimize \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/data.csv" \
-    --n_trials 3 \
-    --study_name "bert_optimization" \
+    --data_file "data/dataset.csv" \
+    --n_trials 50 \
+    --study_name "bert_opt" \
     --metric f1
 ```
 
-3. **Model Training**
-
-#### Training Modes
-
-The training script supports three modes of operation:
-
-1. **Using Best Optimized Configuration**
+### 3. Model Evaluation
 ```bash
-# Automatically uses best configuration from previous optimization runs
-python -m src.training.train \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/data.csv"
+python -m src.evaluation.evaluator \
+    --best_model "models/best_model.pt" \
+    --output_dir "evaluation_results"
 ```
 
-2. **Using Default Configuration** (when no optimization results exist)
-```bash
-# Uses standard architecture with default settings
-python -m src.training.train \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/data.csv" \
-    --architecture "standard"  # Forces standard architecture
+## Architecture Details
+
+### Standard Classifier
+- Configurable number of layers
+- Progressive dimension reduction
+- Multiple activation functions
+- Flexible regularization options
+
+```python
+config = {
+    'architecture_type': 'standard',
+    'num_layers': 2,
+    'hidden_dim': 256,
+    'activation': 'gelu',
+    'regularization': 'dropout',
+    'dropout_rate': 0.1
+}
 ```
 
-3. **Using Custom Configuration**
-```bash
-# Example: Custom standard architecture
-python -m src.training.train \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/data.csv" \
-    --architecture "standard" \
-    --num_layers 3 \
-    --hidden_dim 512 \
-    --activation "relu" \
-    --regularization "batchnorm"
+### PlaneResNet
+- Parallel residual blocks
+- Efficient feature processing
+- Skip connections
+- Batch normalization
 
-# Example: Custom PlaneResNet architecture
-python -m src.training.train \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/data.csv" \
-    --architecture "plane_resnet" \
-    --num_planes 8 \
-    --plane_width 128
+```python
+config = {
+    'architecture_type': 'plane_resnet',
+    'num_planes': 8,
+    'plane_width': 128,
+    'cls_pooling': True
+}
 ```
-
-The script automatically logs the source and details of the configuration being used:
-```
-Using best configuration from previous optimization:
-Architecture: plane_resnet
-Learning rate: 1e-4
-Weight decay: 0.001
-Number of planes: 8
-Plane width: 128
-
-OR
-
-No previous optimization found. Using default configuration:
-Architecture: standard
-Number of layers: 2
-Hidden dimension: 256
-Activation: gelu
-Regularization: dropout
-
-OR
-
-Using provided configuration:
-Architecture: standard
-Number of layers: 3
-Hidden dimension: 512
-Activation: relu
-Regularization: batchnorm
-```
-
-4. **Model Validation**
-```bash
-python -m src.training.validate \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/test_data.csv" \
-    --checkpoint_path "checkpoints/best_model.pt"
-```
-
-5. **Direct Training**
-For training with fixed configuration:
-```bash
-python -m src.training.train \
-    --bert_model_name "bert_encoder" \
-    --data_file "data/data.csv" \
-    --architecture "standard" \
-    --learning_rate 2e-5 \
-    --num_epochs 10 \
-    --batch_size 32
-```
-
-Use `--architecture plane_resnet` for the PlaneResNet architecture.
 
 ## Data Format
 
-The model expects input data in CSV format with specific column names:
-
+Required CSV format:
 ```csv
 text,category
-"The economy grew by 2.5% last quarter","economics"
-"Scientists discover new species in Amazon","science"
-"Team wins championship in overtime","sports"
+"Sample text 1","class_a"
+"Sample text 2","class_b"
 ```
 
-Required columns:
-- `text`: Contains the input text to be classified
-- `category`: Contains the target class/label
+Requirements:
+- UTF-8 encoding
+- Headers: "text" and "category" (exact names)
+- No missing values
+- Proper CSV escaping for quotes/commas
 
-Notes:
-- Column names must be exactly "text" and "category" (case-sensitive)
-- Categories are automatically encoded using scikit-learn's LabelEncoder
-- Number of unique categories must match `--num_classes` parameter
-- CSV should use UTF-8 encoding
-- Text can contain quotes and commas (proper CSV escaping required)
+## Configuration
 
-## Data Split Strategy
-
-### Split Ratios
-- Test Set: 20% (held out)
-- Training Set: 64% (80% of remaining)
-- Validation Set: 16% (20% of remaining)
-
-### Data Usage by Phase
-
-1. **Optimization Phase**
-   - Uses only training + validation data (80%)
-   - Creates new train/val splits for each trial
-   - Never sees test data
-   - Used to find best hyperparameters
-
-2. **Training Phase**
-   - Uses fixed train/val split
-   - Training on 64% of data
-   - Validation on 16% of data
-   - Used to train final model
-
-3. **Validation Phase**
-   - Uses held-out test set (20%)
-   - Only used for final evaluation
-   - Never used in training or optimization
-
-### Data Leakage Prevention
-- Test set is split first and saved separately
-- Test set is never used during optimization or training
-- Optimization trials create new splits from non-test data
-- Validation metrics only computed on appropriate split
-- Test set only loaded during final validation phase
-
-## Architectures
-
-This framework provides two specialized classifier architectures for BERT embeddings:
-
-### Standard Classifier Architecture
-
-A configurable deep neural network that processes BERT embeddings through sequential layers:
-
+### Model Configuration
 ```python
-{
-    'architecture_type': 'standard',
-    'num_layers': 1-4,         # Number of hidden layers
-    'hidden_dim': [32-1024],   # Dimension of hidden layers
-    'activation': ['gelu', 'relu'],  # Activation function
-    'regularization': ['dropout', 'batchnorm'],  # Regularization type
-    'dropout_rate': 0.1-0.5,   # Dropout probability
-    'cls_pooling': True/False  # Use CLS token vs mean pooling
-}
+config = ModelConfig(
+    bert_model_name="bert-base-uncased",
+    num_classes=3,
+    batch_size=32,
+    learning_rate=2e-5,
+    num_epochs=10
+)
 ```
 
-#### Key Features
-- **Progressive Dimensionality**: Smooth dimension transitions between layers
-- **Flexible Depth**: Configurable number of hidden layers (1-4)
-- **Advanced Activations**: Support for modern activation functions
-- **Dual Regularization**: Choice of dropout or batch normalization
-- **Adaptive Pooling**: CLS token or mean pooling strategies
-
-#### Architecture Details
-1. Input layer processes BERT embeddings (384 dimensions)
-2. Configurable hidden layers with:
-   - Linear transformation
-   - Activation function (GELU/ReLU)
-   - Regularization (Dropout/BatchNorm)
-   - Progressive dimension reduction
-3. Final classification layer
-
-#### Advantages
-- Simple yet effective architecture
-- Well-suited for traditional text classification
-- Strong regularization options
-- Memory efficient
-- Easy to interpret
-
-#### Recommended Settings
-- Single layer for simple tasks
-- 2-3 layers for complex tasks
-- Higher dropout (0.3-0.5) for large datasets
-- BatchNorm for deeper configurations
-- Start with smaller hidden dimensions (256-512)
-
-### PlaneResNet Architecture
-
-The PlaneResNet architecture is an innovative classifier design that processes BERT embeddings through sequential residual planes:
-
+### Evaluation Configuration
 ```python
-{
-    'architecture_type': 'plane_resnet',
-    'num_planes': 4-16,        # Number of parallel residual blocks
-    'plane_width': [32, 64, 128, 256],  # Width of each plane
-    'cls_pooling': True/False  # Use CLS token vs mean pooling
-}
+config = EvaluationConfig(
+    metrics=["accuracy", "f1", "precision", "recall"],
+    output_dir="evaluation_results",
+    batch_size=64
+)
 ```
-
-#### Key Features
-- **Residual Connections**: Each plane uses skip connections for better gradient flow
-- **Plane Width**: Controls the dimensionality of feature processing
-- **Adaptive Pooling**: Supports both CLS token and mean pooling strategies
-
-#### Architecture Details
-1. Input projection layer maps BERT embeddings to plane width
-2. N parallel ResNet planes process features independently
-3. Each plane contains:
-   - Two linear transformations
-   - Batch normalization
-   - ReLU activation
-   - Skip connection
-4. Final output layer combines plane outputs for classification
-
-#### Advantages
-- Better feature extraction through parallel processing
-- Reduced vanishing gradient problem via skip connections
-- Flexible capacity scaling through num_planes parameter
-- Efficient parameter usage compared to deep sequential networks
-
-#### Recommended Settings
-- Start with 4-8 planes for small datasets
-- Increase planes (8-16) for complex tasks
-- Use larger plane widths (128, 256) for rich feature spaces
-- Enable cls_pooling for sentence classification tasks
-
-## Optimization Features
-
-- Automated hyperparameter search using Optuna
-- Supports multiple sampling strategies:
-  - TPE (default)
-  - Random
-  - CMA-ES
-  - QMC (Sobol)
-- Early stopping with HyperbandPruner
-- Progress tracking with tqdm
-- Best model state saving
-- Multi-experiment support with seeds
-
-## Environment Setup
-
-```bash
-# Create environment
-conda env create -f nlp_env.yml
-
-# Optional: Clean reinstall
-conda env remove -n nlp_env -y && conda env create -f nlp_env.yml
-```
-
-## Training Configuration
-
-Key parameters:
-- `learning_rate`: 1e-5 to 1e-3 (log scale)
-- `weight_decay`: 1e-8 to 1e-3 (log scale)
-- `batch_size`: [16, 32, 64]
-- `warmup_ratio`: 0.0 to 0.2
-- `num_epochs`: Configurable, default 10
-
-## Metrics
-
-Supported evaluation metrics:
-- F1 score (macro)
-- Accuracy
-
-Progress is tracked using both metrics, with one selected as primary for optimization.
 
 ## Best Practices
 
-1. Start with a small number of trials (3-5) for testing
-2. Use TPE sampler for best results
-3. Monitor early stopping behavior
-4. Consider architecture-specific parameter ranges
+### Training
+1. Start with standard architecture for baseline
+2. Use optimization for complex datasets
+3. Monitor validation metrics
+4. Enable early stopping
 
-## Dependencies
+### Optimization
+1. Set appropriate trial budget
+2. Use TPE sampler for efficiency
+3. Define reasonable parameter ranges
+4. Save best configurations
 
-See nlp_env.yml for complete list. Key requirements:
-- PyTorch
-- Transformers
-- Optuna
-- scikit-learn
-- pandas
+### Evaluation
+1. Use held-out test set
+2. Consider multiple metrics
+3. Analyze confusion matrix
+4. Check confidence scores
 
 ## Troubleshooting
 
-### Common Issues
-- **CUDA Out of Memory**: Reduce batch size or model size
-- **FutureWarning for torch.load**: Using `weights_only=True` for all checkpoint loading
-- **Tokenizer Warnings**: Explicitly set `clean_up_tokenization_spaces=True`
-- **Poor Performance**: Check learning rate and increase number of epochs
+Common issues and solutions:
 
-### Memory Requirements
-- CPU: Minimum 8GB RAM recommended
-- GPU: Minimum 4GB VRAM for small batches
-- Storage: ~500MB for model files and dependencies
+1. **Memory Issues**
+   - Reduce batch size
+   - Use gradient accumulation
+   - Switch to CPU if needed
+
+2. **Poor Performance**
+   - Check learning rate
+   - Increase training epochs
+   - Verify data quality
+   - Try different architecture
+
+3. **Data Issues**
+   - Verify CSV format
+   - Check encoding
+   - Validate label consistency
 
 ## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Write tests for new features
-4. Commit your changes (`git commit -m 'Add some amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+2. Create feature branch
+3. Add tests
+4. Submit pull request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - See LICENSE file for details
 
-## Model Evaluation
+## Citation
 
-Use the dedicated evaluator to assess model performance:
+If you use this framework in your research, please cite:
+
+```bibtex
+@software{bert_classification_framework,
+    title = {BERT Text Classification Framework},
+    year = {2023},
+    author = {Framework Authors},
+    url = {https://github.com/username/repo}
+}
 ```
