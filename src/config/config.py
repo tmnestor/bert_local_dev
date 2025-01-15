@@ -262,3 +262,35 @@ class ValidationConfig(ModelConfig):
             logger.info("Selected best model: %s", best_model)
             
         return best_model
+
+@dataclass
+class EvaluationConfig(ModelConfig):
+    """Configuration for model evaluation"""
+    best_model: Path = field(default=None)
+    output_dir: Path = field(default=Path("evaluation_results"))
+    metrics: List[str] = field(default_factory=lambda: ["accuracy", "f1", "precision", "recall"])
+    
+    @classmethod
+    def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Add evaluation-specific command line arguments"""
+        super().add_argparse_args(parser)
+        
+        eval_group = parser.add_argument_group('Evaluation')
+        eval_group.add_argument('--best_model', type=Path, required=True,
+                              help='Path to trained model checkpoint')
+        eval_group.add_argument('--output_dir', type=Path, 
+                              default=cls.output_dir,
+                              help='Directory to save evaluation results')
+        eval_group.add_argument('--metrics', nargs='+', type=str,
+                              default=cls.metrics,
+                              choices=["accuracy", "f1", "precision", "recall"],
+                              help='Metrics to compute')
+
+    def validate(self) -> None:
+        """Validate evaluation configuration"""
+        super().validate()
+        if not self.best_model:
+            raise ValueError("best_model path must be specified")
+        if not self.best_model.exists():
+            raise FileNotFoundError(f"Model file not found: {self.best_model}")
+        self.output_dir.mkdir(parents=True, exist_ok=True)

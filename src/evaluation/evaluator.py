@@ -5,7 +5,7 @@ import pandas as pd
 from sklearn.metrics import classification_report
 from tqdm.auto import tqdm
 
-from ..config.config import ModelConfig
+from ..config.config import EvaluationConfig  # Update import to use EvaluationConfig
 from ..models.model import BERTClassifier
 from ..utils.metrics import calculate_metrics
 from ..utils.train_utils import load_and_preprocess_data, create_dataloaders
@@ -171,25 +171,43 @@ class ModelEvaluator:
             
         return metrics, results_df
 
+    @classmethod
+    def from_config(cls, config: EvaluationConfig) -> 'ModelEvaluator':
+        """Create evaluator instance from config"""
+        return cls(
+            model_path=config.best_model,
+            config=config
+        )
+
 def main():
     """CLI entry point"""
     import argparse
     
     parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
-    parser.add_argument('model_path', type=Path, help='Path to trained model')
+    parser.add_argument('--best_model', type=Path, required=True,
+                       help='Path to best model checkpoint')
     parser.add_argument('--output_dir', type=Path, default=Path('evaluation_results'),
                        help='Directory to save evaluation results')
     parser.add_argument('--metrics', nargs='+', type=str,
                        default=ModelEvaluator.DEFAULT_METRICS,
                        choices=ModelEvaluator.DEFAULT_METRICS,
                        help='Metrics to compute')
+    ModelEvaluator.add_model_args(parser)  # Add any additional model arguments
     
     args = parser.parse_args()
-    config = ModelConfig()  # Use default config
-    config.metrics = args.metrics  # Add metrics to config
+    config = EvaluationConfig.from_args(args)
     
-    evaluator = ModelEvaluator(args.model_path, config)
-    metrics, _ = evaluator.evaluate(save_predictions=True, output_dir=args.output_dir)
+    try:
+        logger.info(f"Loading model from: {config.best_model}")
+        evaluator = ModelEvaluator.from_config(config)
+        metrics, _ = evaluator.evaluate(
+            save_predictions=True,
+            output_dir=config.output_dir
+        )
+        logger.info("Evaluation completed successfully")
+    except Exception as e:
+        logger.error(f"Evaluation failed: {str(e)}", exc_info=True)
+        raise
 
 if __name__ == '__main__':
     main()
