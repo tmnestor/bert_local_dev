@@ -5,7 +5,7 @@ mkdir -p bert_local_dev
 cd bert_local_dev
 
 # Create root level directories
-mkdir -p src/{config,models,training,tuning,evaluation,utils} tests logs models data evaluation_results
+mkdir -p src/{config,models,training,tuning,evaluation,utils} logs best_trials data evaluation_results
 
 # Create src/config files
 touch src/config/__init__.py
