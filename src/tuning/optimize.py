@@ -134,24 +134,30 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
     return study.best_trial.params
 
 def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, model_config: ModelConfig) -> None:
+    """Save best trial model in a format compatible with training saves"""
     model_config.best_trials_dir.mkdir(exist_ok=True, parents=True)
-    metric_key = f'{model_config.metric}_score'
     final_model_path = model_config.best_trials_dir / f'best_model_{trial_study_name}.pt'
     
+    # Standardize save format to match training
     save_dict = {
         'model_state_dict': best_model_info['model_state'],
-        'config': best_model_info['config'],
-        'trial_number': best_model_info['trial_number'],
-        metric_key: best_model_info[metric_key],
-        'study_name': trial_study_name,
+        'config': {
+            'classifier_config': best_model_info['config'],
+            'epoch': -1,  # Indicates this is from tuning
+            'optimizer_state': None,
+        },
+        'metric_value': best_model_info[f"{model_config.metric}_score"],
+        'num_classes': model_config.num_classes,
         'hyperparameters': best_model_info['params'],
-        'timestamp': datetime.now().isoformat(),
-        'num_classes': model_config.num_classes  # Add num_classes to saved info
+        'trial_number': best_model_info['trial_number'],
+        'study_name': trial_study_name,
+        'timestamp': datetime.now().isoformat()
     }
     torch.save(save_dict, final_model_path)
     logger.info("Saved best model to %s", final_model_path)
-    logger.info("Best %s: %.4f", model_config.metric, best_model_info[metric_key])
+    logger.info("Best %s: %.4f", model_config.metric, save_dict['metric_value'])
 
+# First save location: During optimization in the objective function
 def objective(trial: optuna.Trial, 
               model_config: ModelConfig, 
               texts: List[str], 

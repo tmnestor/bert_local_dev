@@ -150,10 +150,10 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
             
             if score > best_score:
                 best_score = score
-                # Use utility function to save model state
+                # Save model when new best score is achieved
                 save_model_state(
                     model.state_dict(),
-                    model_config.model_save_path,
+                    model_config.model_save_path,  # This is "best_trials/bert_classifier.pth"
                     score,
                     {
                         'epoch': epoch,

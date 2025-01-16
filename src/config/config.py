@@ -249,39 +249,35 @@ class ValidationConfig(ModelConfig):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _find_best_model(self) -> Optional[Path]:
-        """Find best model from Optuna trials"""
+        """Find best model from either training or tuning"""
         if not self.best_trials_dir.exists():
             logger.warning("Best trials directory not found: %s", self.best_trials_dir)
             return None
             
-        # First try to find best model file
+        # First try tuning models
         model_files = list(self.best_trials_dir.glob("best_model_*.pt"))
+        # Then try training checkpoint
         if not model_files:
-            # If no best model, try checkpoint file
             checkpoint = self.best_trials_dir / "bert_classifier.pth"
             if checkpoint.exists():
-                logger.info("Found checkpoint file: %s", checkpoint)
+                logger.info("Found training checkpoint: %s", checkpoint)
                 return checkpoint
-            logger.warning("No model files found in best trials directory")
-            return None
-            
-        # Find the best performing model
+                
+        # Find best performing model from either source
         best_model = None
         best_score = float('-inf')
         
-        for model_file in model_files:
+        for file in model_files:
             try:
-                checkpoint = torch.load(model_file, map_location='cpu', weights_only=False)
-                score = checkpoint.get('f1_score', 
-                       checkpoint.get('accuracy_score',
-                       checkpoint.get('metric_value',
-                       float('-inf'))))
+                checkpoint = torch.load(file, map_location='cpu', weights_only=False)
+                # Handle both metric formats
+                score = checkpoint.get('metric_value', float('-inf'))
                 if score > best_score:
                     best_score = score
-                    best_model = model_file
-                    logger.info("Found better model with score %f: %s", score, model_file)
-            except (RuntimeError, FileNotFoundError, pickle.UnpicklingError) as e:
-                logger.warning("Couldn't load %s: %s", model_file, str(e))
+                    best_model = file
+                    logger.info("Found better model with score %f: %s", score, file)
+            except Exception as e:
+                logger.warning("Couldn't load %s: %s", file, str(e))
                 continue
                 
         if best_model is None:

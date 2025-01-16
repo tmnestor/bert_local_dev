@@ -33,14 +33,31 @@ class ModelEvaluator:
         try:
             checkpoint = torch.load(self.model_path, map_location=self.device)
             
-            # Extract model configuration
+            # Extract model configuration - handle both training and tuning formats
             model_state = checkpoint.get('model_state_dict')
-            model_config = checkpoint.get('config', {}).get('classifier_config', {})
-            num_classes = checkpoint.get('num_classes', self.config.num_classes)
-            
             if not model_state:
                 raise ValueError("No model state found in checkpoint")
+                
+            # Get classifier config, handling both formats
+            config_container = checkpoint.get('config', {})
+            if isinstance(config_container, dict):
+                model_config = config_container.get('classifier_config', {})
+            else:
+                model_config = config_container
+                
+            # Get number of classes
+            num_classes = checkpoint.get('num_classes', self.config.num_classes)
             
+            # Log source of model
+            if 'study_name' in checkpoint:
+                logger.info("Loading model from optimization trial")
+                logger.info("Study: %s, Trial: %s", 
+                           checkpoint.get('study_name'), 
+                           checkpoint.get('trial_number'))
+            else:
+                logger.info("Loading model from training checkpoint")
+                logger.info("Epoch: %s", config_container.get('epoch', 'unknown'))
+
             # Ensure all required configuration keys exist
             default_config = {
                 'architecture_type': 'standard',
