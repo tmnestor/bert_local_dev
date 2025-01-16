@@ -33,6 +33,12 @@ def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False)
         logger.info("Creating new data splits...")
         splits = splitter.create_splits(config.data_file)
     
+    # Set num_classes if not explicitly specified
+    if config.num_classes is None:
+        config.num_classes = splits.num_classes
+    elif config.num_classes != splits.num_classes:
+        raise ValueError(f"Specified num_classes ({config.num_classes}) does not match dataset ({splits.num_classes})")
+    
     if validation_mode:
         logger.info(f"Using test set with {len(splits.test_texts)} samples")
         return splits.test_texts, splits.test_labels, splits.label_encoder

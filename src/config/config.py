@@ -16,7 +16,7 @@ VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
 @dataclass
 class ModelConfig(BaseConfig):
     bert_model_name: str = './bert_encoder'  # Update default value
-    num_classes: int = 5
+    num_classes: Optional[int] = None  # Changed from fixed 5 to Optional[int]
     max_seq_len: int = 512  # Changed from max_length
     batch_size: int = 16
     num_epochs: int = 10  # Number of epochs
@@ -131,8 +131,8 @@ class ModelConfig(BaseConfig):
 
     def _validate_training_params(self) -> None:
         """Validate training-related parameters"""
-        if self.num_classes < 1:
-            raise ValueError("num_classes must be positive")
+        if self.num_classes is not None and self.num_classes < 1:
+            raise ValueError("if specified, num_classes must be positive")
         if self.max_seq_len < 1:
             raise ValueError("max_seq_len must be positive")
         if self.batch_size < 1:
