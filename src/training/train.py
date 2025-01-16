@@ -176,14 +176,21 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
+    # Add all ModelConfig arguments including num_epochs
     ModelConfig.add_argparse_args(parser)
     
-    # Add architecture type argument, but make it optional
+    # Add architecture type argument
     parser.add_argument('--architecture', type=str, default=None,
                        choices=['standard', 'plane_resnet'],
                        help='Classifier architecture to use. If not specified, uses best configuration from optimization.')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # Validate num_epochs is positive
+    if args.num_epochs < 1:
+        parser.error("num_epochs must be positive")
+        
+    return args
 
 if __name__ == "__main__":
     # Remove logging.basicConfig as it's handled by logging_manager
