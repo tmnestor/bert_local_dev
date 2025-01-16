@@ -256,36 +256,34 @@ class ValidationConfig(ModelConfig):
             
         # First try tuning models
         model_files = list(self.best_trials_dir.glob("best_model_*.pt"))
-        # Then try training checkpoint
-        if not model_files:
-            checkpoint = self.best_trials_dir / "bert_classifier.pth"
-            if checkpoint.exists():
-                logger.info("Found training checkpoint: %s", checkpoint)
-                return checkpoint
-                
-        # Find best performing model from either source
-        best_model = None
-        best_score = float('-inf')
-        
-        for file in model_files:
-            try:
-                checkpoint = torch.load(file, map_location='cpu', weights_only=False)
-                # Handle both metric formats
-                score = checkpoint.get('metric_value', float('-inf'))
-                if score > best_score:
-                    best_score = score
-                    best_model = file
-                    logger.info("Found better model with score %f: %s", score, file)
-            except Exception as e:
-                logger.warning("Couldn't load %s: %s", file, str(e))
-                continue
-                
-        if best_model is None:
-            logger.warning("No valid model found in best trials directory")
-        else:
-            logger.info("Selected best model: %s", best_model)
+        if model_files:
+            best_model = None
+            best_score = float('-inf')
             
-        return best_model
+            for file in model_files:
+                try:
+                    checkpoint = torch.load(file, map_location='cpu', weights_only=False)
+                    # Look for metric value consistently
+                    score = checkpoint.get('metric_value', float('-inf'))
+                    if score > best_score:
+                        best_score = score
+                        best_model = file
+                        logger.info("Found better model with score %f: %s", score, file)
+                except Exception as e:
+                    logger.warning("Couldn't load %s: %s", file, str(e))
+                    continue
+                    
+            if best_model:
+                return best_model
+                
+        # Try training checkpoint as fallback
+        checkpoint = self.best_trials_dir / "bert_classifier.pth"
+        if checkpoint.exists():
+            logger.info("Found training checkpoint: %s", checkpoint)
+            return checkpoint
+            
+        logger.warning("No valid model found in best trials directory")
+        return None
 
 @dataclass
 class EvaluationConfig(ModelConfig):

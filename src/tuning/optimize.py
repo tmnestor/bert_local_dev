@@ -104,15 +104,18 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
     study = _create_study(experiment_name, storage, model_config.sampler, random_seed)
     study.set_user_attr("best_value", 0.0)
     
-    # Track best model info
-    best_model_info = {}
+    # Track best performance across all trials
+    global_best_info = {
+        'score': float('-inf'),
+        'model_info': None
+    }
     
     # Run optimization
     objective_with_progress = partial(objective, 
-                                    model_config=model_config,  # Changed from config to model_config
+                                    model_config=model_config,
                                     texts=texts, 
                                     labels=labels,
-                                    best_model_info=best_model_info,
+                                    best_model_info=global_best_info,  # Pass global tracking
                                     trial_pbar=trial_pbar,
                                     epoch_pbar=epoch_pbar)
     
@@ -121,15 +124,15 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
             objective_with_progress,
             n_trials=n_trials or model_config.n_trials,
             timeout=timeout,
-            callbacks=[save_trial_callback(experiment_name, model_config)],
+            callbacks=[save_trial_callback(experiment_name, model_config, global_best_info)],  # Pass global tracking
             gc_after_trial=True
         )
     finally:
         trial_pbar.close()
         epoch_pbar.close()
         
-        if best_model_info:
-            save_best_trial(best_model_info, experiment_name, model_config)
+        if global_best_info['model_info']:
+            save_best_trial(global_best_info['model_info'], experiment_name, model_config)
             
     return study.best_trial.params
 
@@ -138,24 +141,28 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
     model_config.best_trials_dir.mkdir(exist_ok=True, parents=True)
     final_model_path = model_config.best_trials_dir / f'best_model_{trial_study_name}.pt'
     
-    # Standardize save format to match training
+    # Debug logging
+    logger.info("Saving trial with performance:")
+    logger.info("Trial Score in best_model_info: %s", best_model_info.get(f'{model_config.metric}_score'))
+    logger.info("Model State Dict Size: %d", len(best_model_info['model_state']))
+    
+    metric_key = f'{model_config.metric}_score'
     save_dict = {
         'model_state_dict': best_model_info['model_state'],
         'config': {
             'classifier_config': best_model_info['config'],
-            'epoch': -1,  # Indicates this is from tuning
-            'optimizer_state': None,
+            'epoch': -1,
         },
-        'metric_value': best_model_info[f"{model_config.metric}_score"],
-        'num_classes': model_config.num_classes,
-        'hyperparameters': best_model_info['params'],
-        'trial_number': best_model_info['trial_number'],
+        'metric_value': best_model_info[metric_key],  # Verify this value
         'study_name': trial_study_name,
-        'timestamp': datetime.now().isoformat()
+        'trial_number': best_model_info['trial_number'],
+        'num_classes': model_config.num_classes,
+        'hyperparameters': best_model_info['params']
     }
     torch.save(save_dict, final_model_path)
+    logger.info(f"Best trial metric ({metric_key}): {best_model_info[metric_key]}")
     logger.info("Saved best model to %s", final_model_path)
-    logger.info("Best %s: %.4f", model_config.metric, save_dict['metric_value'])
+    logger.info("Best %s: %.4f", model_config.metric, best_model_info[metric_key])
 
 # First save location: During optimization in the objective function
 def objective(trial: optuna.Trial, 
@@ -225,7 +232,8 @@ def objective(trial: optuna.Trial,
     scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
     
     # Training loop
-    best_score = 0.0
+    trial_best_score = 0.0
+    trial_best_state = None
     patience = max(5, trial.number // 5)
     no_improve_count = 0
     
@@ -241,16 +249,21 @@ def objective(trial: optuna.Trial,
             
         trial.report(score, epoch)
         
-        if score > best_score:
+        if score > trial_best_score:
             no_improve_count = 0
-            best_score = score
-            best_model_info.update({
-                'model_state': model.state_dict(),
+            trial_best_score = score
+            trial_best_state = {
+                'model_state': model.state_dict().copy(),
                 'config': classifier_config.copy(),
-                f'{model_config.metric}_score': best_score,
+                f'{model_config.metric}_score': trial_best_score,
                 'trial_number': trial.number,
-                'params': trial.params
-            })
+                'params': trial.params.copy()
+            }
+            # Update global best if better
+            if trial_best_score > best_model_info['score']:
+                best_model_info['score'] = trial_best_score
+                best_model_info['model_info'] = trial_best_state
+                logger.info(f"New best model found in trial {trial.number} with score: {trial_best_score:.4f}")
         else:
             no_improve_count += 1
             
@@ -260,19 +273,23 @@ def objective(trial: optuna.Trial,
     if trial_pbar:
         trial_pbar.update(1)
         
-    return best_score
+    return trial_best_score
 
-def save_trial_callback(trial_study_name: str, model_config: ModelConfig):
+def save_trial_callback(trial_study_name: str, model_config: ModelConfig, best_model_info: Dict[str, Any]):
+    """Callback to save trial information"""
     def callback(study: optuna.Study, trial: optuna.Trial):
-        if trial.value and trial.value > study.user_attrs.get("best_value", 0.0):
+        if trial.value and trial.value > study.user_attrs.get("best_value", float('-inf')):
             study.set_user_attr("best_value", trial.value)
             model_config.best_trials_dir.mkdir(exist_ok=True, parents=True)
-            torch.save({
+            best_trial_info = {
                 'trial_number': trial.number,
                 'params': trial.params,
                 'value': trial.value,
-                'study_name': trial_study_name
-            }, model_config.best_trials_dir / f'best_trial_{trial_study_name}.pt')
+                'study_name': trial_study_name,
+                'best_model_score': best_model_info['score'] if best_model_info['model_info'] else None
+            }
+            torch.save(best_trial_info, 
+                      model_config.best_trials_dir / f'best_trial_{trial_study_name}.pt')
     return callback
 
 def load_best_configuration(best_trials_dir: Path, exp_name: str = None) -> dict:

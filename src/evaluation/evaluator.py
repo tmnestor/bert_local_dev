@@ -32,53 +32,27 @@ class ModelEvaluator:
         
         try:
             checkpoint = torch.load(self.model_path, map_location=self.device)
+            logger.info("Loaded checkpoint with keys: %s", list(checkpoint.keys()))
             
-            # Extract model configuration - handle both training and tuning formats
-            model_state = checkpoint.get('model_state_dict')
-            if not model_state:
-                raise ValueError("No model state found in checkpoint")
-                
-            # Get classifier config, handling both formats
+            # Extract model state and config consistently
+            model_state = checkpoint['model_state_dict']
             config_container = checkpoint.get('config', {})
-            if isinstance(config_container, dict):
-                model_config = config_container.get('classifier_config', {})
-            else:
-                model_config = config_container
-                
-            # Get number of classes
+            classifier_config = config_container.get('classifier_config', {})
             num_classes = checkpoint.get('num_classes', self.config.num_classes)
             
-            # Log source of model
+            # Log source and score
             if 'study_name' in checkpoint:
                 logger.info("Loading model from optimization trial")
-                logger.info("Study: %s, Trial: %s", 
-                           checkpoint.get('study_name'), 
-                           checkpoint.get('trial_number'))
-            else:
-                logger.info("Loading model from training checkpoint")
-                logger.info("Epoch: %s", config_container.get('epoch', 'unknown'))
-
-            # Ensure all required configuration keys exist
-            default_config = {
-                'architecture_type': 'standard',
-                'num_layers': 2,
-                'hidden_dim': 256,
-                'activation': 'gelu',
-                'regularization': 'dropout',
-                'dropout_rate': 0.1,
-                'cls_pooling': True,
-                'learning_rate': self.config.learning_rate,
-                'weight_decay': 0.01
-            }
-            
-            # Update with saved config if available
-            model_config = {**default_config, **model_config}
+                logger.info("Study: %s, Trial: %s, Score: %.4f", 
+                           checkpoint.get('study_name'),
+                           checkpoint.get('trial_number'),
+                           checkpoint.get('metric_value', float('nan')))
             
             # Create and load model
             model = BERTClassifier(
                 self.config.bert_model_name,
                 num_classes,
-                model_config
+                classifier_config
             )
             model.load_state_dict(model_state)
             model.to(self.device)
@@ -88,18 +62,18 @@ class ModelEvaluator:
             logger.info("\nModel Architecture Details:")
             logger.info("-" * 50)
             logger.info(f"BERT Model: {self.config.bert_model_name}")
-            logger.info(f"Architecture Type: {model_config['architecture_type']}")
+            logger.info(f"Architecture Type: {classifier_config['architecture_type']}")
             logger.info(f"Number of Classes: {num_classes}")
-            logger.info(f"CLS Pooling: {model_config['cls_pooling']}")
+            logger.info(f"CLS Pooling: {classifier_config['cls_pooling']}")
             
-            if model_config['architecture_type'] == 'standard':
+            if classifier_config['architecture_type'] == 'standard':
                 logger.info("\nStandard Classifier Configuration:")
-                logger.info(f"Number of Layers: {model_config['num_layers']}")
-                logger.info(f"Hidden Dimension: {model_config['hidden_dim']}")
-                logger.info(f"Activation: {model_config['activation']}")
-                logger.info(f"Regularization: {model_config['regularization']}")
-                if model_config['regularization'] == 'dropout':
-                    logger.info(f"Dropout Rate: {model_config['dropout_rate']}")
+                logger.info(f"Number of Layers: {classifier_config['num_layers']}")
+                logger.info(f"Hidden Dimension: {classifier_config['hidden_dim']}")
+                logger.info(f"Activation: {classifier_config['activation']}")
+                logger.info(f"Regularization: {classifier_config['regularization']}")
+                if classifier_config['regularization'] == 'dropout':
+                    logger.info(f"Dropout Rate: {classifier_config['dropout_rate']}")
                 
                 # Log layer sizes
                 input_size = model.bert.config.hidden_size
@@ -108,18 +82,18 @@ class ModelEvaluator:
                 
                 # Calculate and log progression of layer sizes
                 current_size = input_size
-                if model_config['num_layers'] > 1:
-                    ratio = (model_config['hidden_dim'] / current_size) ** (1.0 / (model_config['num_layers'] - 1))
-                    for i in range(model_config['num_layers'] - 1):
+                if classifier_config['num_layers'] > 1:
+                    ratio = (classifier_config['hidden_dim'] / current_size) ** (1.0 / (classifier_config['num_layers'] - 1))
+                    for i in range(classifier_config['num_layers'] - 1):
                         current_size = int(current_size * ratio)
-                        current_size = max(current_size, model_config['hidden_dim'])
+                        current_size = max(current_size, classifier_config['hidden_dim'])
                         logger.info(f"Hidden Layer {i+1} -> {current_size}")
                 logger.info(f"Output Layer -> {num_classes}")
                 
             else:  # plane_resnet
                 logger.info("\nPlaneResNet Configuration:")
-                logger.info(f"Number of Planes: {model_config['num_planes']}")
-                logger.info(f"Plane Width: {model_config['plane_width']}")
+                logger.info(f"Number of Planes: {classifier_config['num_planes']}")
+                logger.info(f"Plane Width: {classifier_config['plane_width']}")
                 logger.info(f"Input Size: {model.bert.config.hidden_size}")
                 logger.info(f"Output Size: {num_classes}")
             
