@@ -76,7 +76,7 @@ class ModelConfig(BaseConfig):
                           help='Name or path of the pre-trained BERT model')
         model.add_argument('--num_classes', type=int, default=cls.num_classes,
                           help='Number of output classes')
-        model.add_argument('--max_seq_len', type=int, default=cls.max_seq_len,
+        model.add_argument('--max_seq_len', type=int, default=cls.max_seq_len,  # Changed from max_length to max_seq_len
                           help='Maximum sequence length for BERT tokenizer')
 
         # System settings
