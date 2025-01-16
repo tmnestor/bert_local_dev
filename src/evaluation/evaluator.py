@@ -229,9 +229,12 @@ class ModelEvaluator:
 
 def main():
     """CLI entry point"""
-    import argparse
-    
     parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
+    
+    # Add all ModelConfig arguments first
+    ModelConfig.add_argparse_args(parser)
+    
+    # Add evaluator-specific arguments
     parser.add_argument('--best_model', type=Path, required=True,
                        help='Path to best model checkpoint')
     parser.add_argument('--output_dir', type=Path, default=Path('evaluation_results'),
@@ -240,16 +243,16 @@ def main():
                        default=ModelEvaluator.DEFAULT_METRICS,
                        choices=ModelEvaluator.DEFAULT_METRICS,
                        help='Metrics to compute')
-    ModelEvaluator.add_model_args(parser)
     
     args = parser.parse_args()
     
-    config = EvaluationConfig()
+    # Create full config from all parsed args
+    config = ModelConfig.from_args(args)
+    
+    # Update with evaluation-specific settings
     config.best_model = args.best_model
     config.output_dir = args.output_dir
     config.metrics = args.metrics
-    config.device = args.device
-    config.batch_size = args.batch_size
     
     try:
         logger.info(f"Loading model from: {config.best_model}")
