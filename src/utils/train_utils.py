@@ -60,8 +60,10 @@ def create_dataloaders(
     )
     
     if validation_mode:
-        # For validation/test, texts and labels are direct lists
-        test_dataset = TextClassificationDataset(texts, labels, tokenizer, config.max_length)
+        test_dataset = TextClassificationDataset(
+            texts, labels, tokenizer, 
+            max_seq_len=config.max_seq_len  # Updated from max_length
+        )
         return DataLoader(test_dataset, batch_size=batch_size)
     
     # For training, texts and labels are passed as lists containing train and val splits
@@ -73,9 +75,9 @@ def create_dataloaders(
     train_texts, val_texts = texts
     train_labels, val_labels = labels
     
-    # Create datasets
-    train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_length)
-    val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_length)
+    # Create datasets - update to use max_seq_len
+    train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_seq_len)
+    val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_seq_len)
     
     # Create and return dataloaders
     return (

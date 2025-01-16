@@ -94,7 +94,7 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
     logger.info("Model config:")
     logger.info("  BERT model: %s", model_config.bert_model_name)
     logger.info("  Device: %s", model_config.device)
-    logger.info("  Max length: %s", model_config.max_length)
+    logger.info("  Max sequence length: %s", model_config.max_seq_len)  # Updated from max_length
     logger.info("  Metric: %s", model_config.metric)
     
     # Initialize progress bars using utility function

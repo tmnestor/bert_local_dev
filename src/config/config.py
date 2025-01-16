@@ -17,7 +17,7 @@ VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
 class ModelConfig(BaseConfig):
     bert_model_name: str = './bert_encoder'  # Update default value
     num_classes: int = 5
-    max_length: int = 128
+    max_seq_len: int = 512  # Changed from max_length
     batch_size: int = 16
     num_epochs: int = 10  # Number of epochs
     learning_rate: float = 2e-5
@@ -76,8 +76,8 @@ class ModelConfig(BaseConfig):
                           help='Name or path of the pre-trained BERT model')
         model.add_argument('--num_classes', type=int, default=cls.num_classes,
                           help='Number of output classes')
-        model.add_argument('--max_length', type=int, default=cls.max_length,
-                          help='Maximum sequence length')
+        model.add_argument('--max_seq_len', type=int, default=cls.max_seq_len,
+                          help='Maximum sequence length for BERT tokenizer')
 
         # System settings
         system = parser.add_argument_group('System Configuration')
@@ -133,8 +133,8 @@ class ModelConfig(BaseConfig):
         """Validate training-related parameters"""
         if self.num_classes < 1:
             raise ValueError("num_classes must be positive")
-        if self.max_length < 1:
-            raise ValueError("max_length must be positive")
+        if self.max_seq_len < 1:
+            raise ValueError("max_seq_len must be positive")
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive")
         if self.num_epochs < 1:

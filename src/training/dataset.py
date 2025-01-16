@@ -1,10 +1,10 @@
 from typing import List, Dict, Any
 import torch
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
+from transformers import PreTrainedTokenizer
 
 class TextClassificationDataset(Dataset):
-    def __init__(self, texts: List[str], labels: List[int], tokenizer: BertTokenizer, max_length: int) -> None:
+    def __init__(self, texts: List[str], labels: List[int], tokenizer: PreTrainedTokenizer, max_seq_len: int = 512):
         """Initialize dataset with input validation"""
         # Validate inputs
         if len(texts) == 0:
@@ -13,16 +13,16 @@ class TextClassificationDataset(Dataset):
             raise ValueError("labels cannot be empty")
         if len(texts) != len(labels):
             raise ValueError(f"texts and labels must have the same length, got {len(texts)} texts and {len(labels)} labels")
-        if max_length < 1:
-            raise ValueError("max_length must be positive")
-        if not isinstance(tokenizer, BertTokenizer):
-            raise TypeError("tokenizer must be an instance of BertTokenizer")
+        if max_seq_len < 1:
+            raise ValueError("max_seq_len must be positive")
+        if not isinstance(tokenizer, PreTrainedTokenizer):
+            raise TypeError("tokenizer must be an instance of PreTrainedTokenizer")
         
         # Store validated inputs
         self.texts = texts
         self.labels = labels
         self.tokenizer = tokenizer
-        self.max_length = max_length
+        self.max_seq_len = max_seq_len
         
     def __len__(self) -> int:
         return len(self.texts)
@@ -32,19 +32,19 @@ class TextClassificationDataset(Dataset):
             raise IndexError(f"Index {idx} out of range")
             
         try:
-            text = self.texts[idx]
-            label = self.labels[idx]
+            text = str(self.texts[idx])
             encoding = self.tokenizer(
                 text,
-                return_tensors='pt',
-                max_length=self.max_length,
+                add_special_tokens=True,
+                max_length=self.max_seq_len,
                 padding='max_length',
-                truncation=True
+                truncation=True,
+                return_tensors='pt'
             )
             return {
                 'input_ids': encoding['input_ids'].flatten(),
                 'attention_mask': encoding['attention_mask'].flatten(),
-                'label': torch.tensor(label)
+                'label': torch.tensor(self.labels[idx], dtype=torch.long)
             }
         except Exception as e:
             raise RuntimeError(f"Error processing item {idx}: {str(e)}") from e

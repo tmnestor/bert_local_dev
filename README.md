@@ -63,14 +63,13 @@ bert_local_dev/
 │       ├── logging_manager.py # Logging setup
 │       ├── metrics.py         # Evaluation metrics
 │       └── train_utils.py     # Training utilities
-├── tests/                     # Unit tests
 ├── logs/                      # Training logs
-├── models/                    # Saved models
+├── best_trials/               # Saved models
 ├── data/                      # Dataset storage
 ├── evaluation_results/        # Evaluation outputs
-├── nlp_env.yml               # Environment specification
-├── README.md                 # Project documentation
-└── LICENSE                   # License file
+├── nlp_env.yml                # Environment specification
+├── README.md                  # Project documentation
+└── LICENSE                    # License file
 ```
 
 ### Key Components
@@ -87,15 +86,17 @@ bert_local_dev/
 ### 1. Basic Training
 ```bash
 python -m src.training.train \
-    --data_file "data/dataset.csv" \
-    --bert_model_name "bert-base-uncased" \
+    --max_seq_len 64 \
+    --data_file "data/bbc-text.csv" \
+    --bert_model_name "./bert_encoder" \
     --architecture "standard"
 ```
 
 ### 2. Hyperparameter Optimization
 ```bash
 python -m src.tuning.optimize \
-    --data_file "data/dataset.csv" \
+    --max_seq_len 64 \
+    --data_file "data/bbc-text.csv" \
     --n_trials 50 \
     --study_name "bert_opt" \
     --metric f1
