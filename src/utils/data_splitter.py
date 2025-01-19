@@ -1,28 +1,54 @@
+import json
+import pickle
 from pathlib import Path
-from typing import NamedTuple, List, Optional, Tuple
+from typing import List, Optional
+from dataclasses import dataclass
+
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-import json
-import pickle
 
 from ..utils.logging_manager import setup_logger
 
 logger = setup_logger(__name__)
 
-class DataSplit(NamedTuple):
-    """Container for dataset splits with their labels"""
+@dataclass
+class DataSplit:
+    """Data split container for text classification tasks.
+    
+    Args:
+        train_texts (List[str]): Training text samples
+        train_labels (List[str]): Training labels
+        val_texts (List[str]): Validation text samples
+        val_labels (List[str]): Validation labels
+        test_texts (Optional[List[str]], optional): Test text samples. Defaults to None.
+        test_labels (Optional[List[str]], optional): Test labels. Defaults to None.
+        label_encoder (LabelEncoder): Fitted label encoder for categories
+        num_classes (int): Number of unique classes in dataset
+    """
     train_texts: List[str]
-    train_labels: List[int]
+    train_labels: List[str]
     val_texts: List[str]
-    val_labels: List[int]
-    test_texts: List[str]
-    test_labels: List[int]
-    label_encoder: LabelEncoder
-    num_classes: int
+    val_labels: List[str]
+    test_texts: Optional[List[str]] = None
+    test_labels: Optional[List[str]] = None
+    label_encoder: Optional[LabelEncoder] = None 
+    num_classes: Optional[int] = None
+
+    def __post_init__(self):
+        """Validate and set num_classes if not provided"""
+        if self.label_encoder and not self.num_classes:
+            self.num_classes = len(self.label_encoder.classes_)
 
 class DataSplitter:
-    """Handles dataset splitting and persistence"""
+    """Handles dataset splitting and persistence.
+
+    Creates and manages train/validation/test splits of text classification datasets,
+    with support for saving and loading splits to disk.
+
+    Args:
+        data_dir: Base directory for data storage.
+    """
     
     def __init__(self, data_dir: Path):
         self.data_dir = Path(data_dir)
@@ -36,15 +62,21 @@ class DataSplitter:
                      val_size: float = 0.2,
                      random_state: int = 42,
                      force: bool = False) -> DataSplit:
-        """
-        Create train/val/test splits from data file
+        """Create train/val/test splits from data file.
         
         Args:
-            data_file: Path to CSV file with 'text' and 'category' columns
-            train_size: Proportion of data for training (default: 0.6)
-            val_size: Proportion of data for validation (default: 0.2)
-            random_state: Random seed for reproducibility
-            force: If True, recreate splits even if they exist
+            data_file: Path to CSV file with 'text' and 'category' columns.
+            train_size: Proportion of data for training (default: 0.6).
+            val_size: Proportion of data for validation (default: 0.2).
+            random_state: Random seed for reproducibility.
+            force: If True, recreate splits even if they exist.
+            
+        Returns:
+            DataSplit object containing the splits and metadata.
+
+        Raises:
+            FileNotFoundError: If data_file doesn't exist.
+            ValueError: If split proportions are invalid.
         """
         if not force and self._splits_exist():
             logger.info("Loading existing splits...")
@@ -129,7 +161,7 @@ class DataSplitter:
                 'test': len(splits.test_texts)
             }
         }
-        with open(self.splits_dir / "metadata.json", 'w') as f:
+        with open(self.splits_dir / "metadata.json", 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
     
     def _validate_split_files(self) -> bool:
@@ -149,7 +181,15 @@ class DataSplitter:
         return all(required_files.values())
     
     def load_splits(self) -> DataSplit:
-        """Load splits from disk with validation"""
+        """Load existing splits from disk.
+
+        Returns:
+            DataSplit object containing the loaded splits and metadata.
+
+        Raises:
+            FileNotFoundError: If split files are missing or corrupted.
+            ValueError: If loaded splits are inconsistent.
+        """
         if not self._validate_split_files():
             raise FileNotFoundError(
                 "One or more split files missing. Required files: "
@@ -169,16 +209,21 @@ class DataSplitter:
                 splits[f"{name}_labels"] = self.label_encoder.transform(df['category']).tolist()
             
             # Load and verify metadata
-            with open(self.splits_dir / "metadata.json", 'r') as f:
+            with open(self.splits_dir / "metadata.json", 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
                 
             if len(self.label_encoder.classes_) != metadata['num_classes']:
                 raise ValueError("Inconsistent number of classes in saved splits")
             
             return DataSplit(
-                **splits,
+                train_texts=splits['train_texts'],
+                train_labels=splits['train_labels'],
+                val_texts=splits['val_texts'],
+                val_labels=splits['val_labels'],
+                test_texts=splits['test_texts'],
+                test_labels=splits['test_labels'],
                 label_encoder=self.label_encoder,
-                num_classes=metadata['num_classes']
+                num_classes=len(self.label_encoder.classes_)
             )
             
         except Exception as e:

@@ -1,15 +1,21 @@
-from typing import Dict, List, Union, Optional, Any
+import logging
+from typing import Any, Dict, List, Optional
+
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import BertModel
-import logging
-
-from src.config.config import ModelConfig
+from transformers import AutoModel
 
 logger = logging.getLogger(__name__)
 
 class PlaneResNetBlock(nn.Module):
+    """A residual block used in the PlaneResNet architecture.
+    
+    Implements a residual connection with batch normalization and ReLU activation.
+    
+    Args:
+        width: Width of the linear layers in the block.
+    """
     def __init__(self, width: int):
         super().__init__()
         self.block = nn.Sequential(
@@ -27,6 +33,14 @@ class PlaneResNetBlock(nn.Module):
         return self.relu(out + identity)
 
 class PlaneResNetHead(nn.Module):
+    """Classification head using parallel residual network architecture.
+    
+    Args:
+        input_size: Dimension of input features.
+        num_classes: Number of output classes.
+        num_planes: Number of parallel residual blocks.
+        plane_width: Width of each residual block.
+    """
     def __init__(self, input_size: int, num_classes: int, num_planes: int, plane_width: int):
         super().__init__()
         
@@ -52,13 +66,39 @@ class PlaneResNetHead(nn.Module):
         return self.output(x)
 
 class BERTClassifier(nn.Module):
+    """BERT-based text classifier with configurable classification head.
+
+    Combines a pre-trained BERT model with either a standard feed-forward or
+    PlaneResNet classification head.
+
+    Args:
+        bert_model_name: Name or path of pre-trained BERT model.
+        num_classes: Number of output classes.
+        classifier_config: Configuration dictionary for the classifier head.
+
+    The classifier_config dictionary should contain:
+        - architecture_type: 'standard' or 'plane_resnet'
+        - cls_pooling: Whether to use CLS token pooling (bool)
+        For standard architecture:
+            - num_layers: Number of hidden layers
+            - hidden_dim: Size of hidden layers
+            - activation: Activation function name
+            - regularization: 'dropout' or 'batchnorm'
+            - dropout_rate: Dropout probability if using dropout
+        For plane_resnet:
+            - num_planes: Number of parallel planes
+            - plane_width: Width of each plane
+
+    Raises:
+        ValueError: For invalid configuration parameters.
+    """
     def __init__(self, bert_model_name: str, num_classes: int, classifier_config: Dict[str, Any]) -> None:
         super().__init__()
         self._validate_config(classifier_config)
         self.classifier_config: Dict[str, Any] = classifier_config
         
-        # Initialize BERT model
-        self.bert: BertModel = BertModel.from_pretrained(bert_model_name)
+        # Initialize MODERNBERT model
+        self.bert: AutoModel = AutoModel.from_pretrained(bert_model_name)
         
         # Freeze BERT's weights
         for param in self.bert.parameters():
@@ -68,7 +108,14 @@ class BERTClassifier(nn.Module):
         self.classifier = self._build_classifier(hidden_size, num_classes, self.classifier_config)
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
-        """Validate classifier configuration."""
+        """Validates the classifier configuration.
+
+        Args:
+            config: Configuration dictionary to validate.
+
+        Raises:
+            ValueError: If any configuration parameters are invalid.
+        """
         valid_architectures = ['standard', 'plane_resnet']
         if 'architecture_type' not in config:
             config['architecture_type'] = 'standard'  # Default to standard
@@ -119,11 +166,11 @@ class BERTClassifier(nn.Module):
     def _build_classifier(self, input_size: int, num_classes: int, config: Dict[str, Any]) -> nn.Module:
         if config['architecture_type'] == 'plane_resnet':
             logger.info("\nBuilding PlaneResNet classifier:")
-            logger.info(f"  Architecture: {config['architecture_type']}")
-            logger.info(f"  Input size: {input_size}")
-            logger.info(f"  Plane width: {config['plane_width']}")
-            logger.info(f"  Number of planes: {config['num_planes']}")
-            logger.info(f"  Output size: {num_classes}")
+            logger.info("  Architecture: %s", config['architecture_type'])
+            logger.info("  Input size: %d", input_size)
+            logger.info("  Plane width: %d", config['plane_width'])
+            logger.info("  Number of planes: %d", config['num_planes'])
+            logger.info("  Output size: %d", num_classes)
             
             return PlaneResNetHead(
                 input_size=input_size,
@@ -135,16 +182,16 @@ class BERTClassifier(nn.Module):
             layer_sizes = self._calculate_layer_sizes(input_size, config['hidden_dim'], config['num_layers'], num_classes)
             
             logger.info("\nBuilding standard classifier:")
-            logger.info(f"  Architecture: {config['architecture_type']}")
-            logger.info(f"  Learning rate: {config.get('learning_rate', 'default')}")
-            logger.info(f"  Weight decay: {config.get('weight_decay', 'default')}")
-            logger.info(f"  Input size: {layer_sizes[0]}")
-            logger.info(f"  Hidden layers: {len(layer_sizes) - 2}")
-            logger.info(f"  Hidden dimension: {config['hidden_dim']}")
-            logger.info(f"  Activation: {config['activation']}")
-            logger.info(f"  Regularization: {config['regularization']}")
+            logger.info("  Architecture: %s", config['architecture_type'])
+            logger.info("  Learning rate: %s", config.get('learning_rate', 'default'))
+            logger.info("  Weight decay: %s", config.get('weight_decay', 'default'))
+            logger.info("  Input size: %s", layer_sizes[0])
+            logger.info("  Hidden layers: %s", len(layer_sizes) - 2)
+            logger.info("  Hidden dimension: %s", config['hidden_dim'])
+            logger.info("  Activation: %s", config['activation'])
+            logger.info("  Regularization: %s", config['regularization'])
             if config['regularization'] == 'dropout':
-                logger.info(f"  Dropout rate: {config['dropout_rate']}")
+                logger.info("  Dropout rate:: %s", config['dropout_rate'])
             
             layers = []
             for i in range(len(layer_sizes) - 1):
@@ -206,6 +253,18 @@ class BERTClassifier(nn.Module):
 
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the model.
+
+        Args:
+            input_ids: Tensor of token ids.
+            attention_mask: Tensor of attention mask.
+
+        Returns:
+            Tensor of logits for each class.
+
+        Raises:
+            RuntimeError: If there's an error during forward pass.
+        """
         try:
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
             if self.classifier_config['cls_pooling']:

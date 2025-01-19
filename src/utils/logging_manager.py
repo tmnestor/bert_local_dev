@@ -4,11 +4,20 @@ import sys
 from datetime import datetime
 
 def setup_logger(name: str, log_dir: Path = Path("logs")) -> logging.Logger:
-    """Setup logger with both file and console output
-    
+    """Setup a logger with both file and console output.
+
+    Sets up a logger with handlers for both file output (with detailed formatting) 
+    and console output (with simplified formatting). Creates timestamped log files.
+
     Args:
-        name: Logger name (typically __name__)
-        log_dir: Directory to store log files
+        name: Logger name (typically __name__).
+        log_dir: Directory to store log files (default: "logs").
+
+    Returns:
+        Logger: Configured logging.Logger instance.
+
+    Raises:
+        OSError: If log directory cannot be created.
     """
     # Create logs directory
     log_dir = Path(log_dir)
@@ -49,8 +58,12 @@ def setup_logger(name: str, log_dir: Path = Path("logs")) -> logging.Logger:
     return logger
 
 def get_log_dir() -> Path:
-    """Get the log directory path"""
+    """Get the path to the log directory.
+
+    Returns:
+        Path: Path object pointing to the logs directory.
+    """
     return Path("logs")
 
 # Global logger instance for common use
-logger = setup_logger('bert_classifier')
+global_logger = setup_logger('bert_classifier')

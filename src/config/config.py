@@ -1,10 +1,10 @@
-from dataclasses import dataclass, fields, field
-from typing import Optional, List
-from pathlib import Path
-import torch
 import argparse
 import logging
-import pickle
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+import torch
 
 from .base_config import BaseConfig
 
@@ -269,7 +269,7 @@ class ValidationConfig(ModelConfig):
                         best_score = score
                         best_model = file
                         logger.info("Found better model with score %f: %s", score, file)
-                except Exception as e:
+                except (IOError, RuntimeError, torch.serialization.pickle.UnpicklingError) as e:
                     logger.warning("Couldn't load %s: %s", file, str(e))
                     continue
                     

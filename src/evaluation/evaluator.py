@@ -15,11 +15,28 @@ from ..utils.logging_manager import setup_logger
 logger = setup_logger(__name__)
 
 class ModelEvaluator:
-    """Dedicated class for model evaluation"""
+    """Model evaluation class for BERT classifiers.
+    
+    This class handles model loading and evaluation, providing detailed metrics
+    and result analysis capabilities.
+    
+    Attributes:
+        model_path (Path): Path to the saved model checkpoint.
+        config (Union[EvaluationConfig, ModelConfig]): Model configuration.
+        device (torch.device): Device to run evaluation on.
+        metrics (List[str]): Metrics to compute during evaluation.
+        model (BERTClassifier): Loaded model instance.
+    """
     
     DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
     
     def __init__(self, model_path: Path, config: Union[EvaluationConfig, ModelConfig]):
+        """Initialize the evaluator.
+        
+        Args:
+            model_path (Path): Path to the saved model checkpoint.
+            config (Union[EvaluationConfig, ModelConfig]): Model configuration.
+        """
         self.model_path = Path(model_path)
         self.config = config
         self.device = torch.device(config.device)
@@ -27,7 +44,14 @@ class ModelEvaluator:
         self.model = self._load_model()
         
     def _load_model(self) -> BERTClassifier:
-        """Load the trained model"""
+        """Load the trained model from checkpoint.
+        
+        Returns:
+            BERTClassifier: Loaded and configured model instance.
+            
+        Raises:
+            RuntimeError: If model loading fails.
+        """
         logger.info(f"Loading model from: {self.model_path}")
         
         try:
@@ -107,16 +131,18 @@ class ModelEvaluator:
     def evaluate(self, 
                 save_predictions: bool = True,
                 output_dir: Optional[Path] = None) -> Tuple[Dict[str, float], pd.DataFrame]:
-        """
-        Evaluate model on test set
+        """Evaluate model on test dataset.
         
         Args:
-            save_predictions: Whether to save predictions to file
-            output_dir: Directory to save results (defaults to validation_results)
-            
+            save_predictions (bool, optional): Whether to save predictions to files.
+                Defaults to True.
+            output_dir (Optional[Path], optional): Directory to save results.
+                Defaults to None, which creates 'evaluation_results' directory.
+        
         Returns:
-            metrics: Dictionary of evaluation metrics
-            results_df: DataFrame with predictions and ground truth
+            Tuple[Dict[str, float], pd.DataFrame]: Tuple containing:
+                - Dictionary of evaluation metrics
+                - DataFrame with predictions and ground truth
         """
         # Load test data
         test_texts, test_labels, label_encoder = load_and_preprocess_data(
@@ -202,7 +228,14 @@ class ModelEvaluator:
 
     @classmethod
     def from_config(cls, config: EvaluationConfig) -> 'ModelEvaluator':
-        """Create evaluator instance from config"""
+        """Create evaluator instance from configuration.
+        
+        Args:
+            config (EvaluationConfig): Evaluation configuration.
+            
+        Returns:
+            ModelEvaluator: Configured evaluator instance.
+        """
         return cls(
             model_path=config.best_model,
             config=config
@@ -210,7 +243,11 @@ class ModelEvaluator:
 
     @classmethod
     def add_model_args(cls, parser: argparse.ArgumentParser) -> None:
-        """Add model-specific arguments"""
+        """Add model-specific arguments to argument parser.
+        
+        Args:
+            parser (argparse.ArgumentParser): Argument parser to extend.
+        """
         model_args = parser.add_argument_group('Model Configuration')
         model_args.add_argument('--device', type=str, default='cpu',
                               choices=['cpu', 'cuda'],
@@ -219,7 +256,11 @@ class ModelEvaluator:
                               help='Batch size for evaluation')
 
 def main():
-    """CLI entry point"""
+    """Command-line interface entry point for model evaluation.
+    
+    Raises:
+        Exception: If evaluation fails.
+    """
     parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
     
     # Add all ModelConfig arguments first

@@ -18,6 +18,17 @@ class TrainerError(Exception):
     pass
 
 class Trainer:
+    """Handles model training and evaluation.
+
+    Manages the training loop, evaluation, model saving/loading, and metric computation.
+
+    Args:
+        model: PyTorch model to train.
+        config: ModelConfig instance containing training parameters.
+
+    Raises:
+        TypeError: If model is not nn.Module or config is not ModelConfig.
+    """
     def __init__(self, model: nn.Module, config: ModelConfig) -> None:
         if not isinstance(model, nn.Module):
             raise TypeError("model must be an instance of nn.Module")
@@ -38,15 +49,19 @@ class Trainer:
         scheduler: _LRScheduler,
         progress_bar: Optional[tqdm] = None
     ) -> float:
-        """Train for one epoch
+        """Train model for one epoch.
         
         Args:
-            train_dataloader: DataLoader for training data
-            optimizer: Optimizer instance
-            scheduler: Learning rate scheduler
+            train_dataloader: DataLoader for training data.
+            optimizer: Optimizer instance.
+            scheduler: Learning rate scheduler.
+            progress_bar: Optional progress bar for tracking.
             
         Returns:
-            float: Average loss for the epoch
+            float: Average loss for the epoch.
+
+        Raises:
+            TrainerError: If training fails or dataloader is empty.
         """
         if len(train_dataloader) == 0:
             raise TrainerError("Empty training dataloader")
@@ -76,13 +91,18 @@ class Trainer:
         return total_loss / len(train_dataloader)
 
     def evaluate(self, eval_dataloader: DataLoader) -> Tuple[float, str]:
-        """Evaluate the model
+        """Evaluate model on validation/test data.
         
         Args:
-            eval_dataloader: DataLoader for evaluation data
+            eval_dataloader: DataLoader for evaluation data.
             
         Returns:
-            Tuple[float, str]: (metric score, classification report)
+            Tuple containing:
+                - float: Primary metric score (f1 or accuracy).
+                - str: Detailed classification report.
+
+        Raises:
+            TrainerError: If evaluation fails or dataloader is empty.
         """
         if len(eval_dataloader) == 0:
             raise TrainerError("Empty evaluation dataloader")
@@ -116,12 +136,15 @@ class Trainer:
             raise TrainerError(f"Error during evaluation: {str(e)}") from e
 
     def save_checkpoint(self, path: str, epoch: int, optimizer: Optimizer) -> None:
-        """Save a training checkpoint
+        """Save a model training checkpoint.
         
         Args:
-            path: Path to save checkpoint
-            epoch: Current epoch number
-            optimizer: Optimizer instance to save state
+            path: Path to save checkpoint.
+            epoch: Current epoch number.
+            optimizer: Optimizer instance to save state.
+
+        Raises:
+            TrainerError: If saving fails.
         """
         try:
             checkpoint = {
@@ -135,14 +158,17 @@ class Trainer:
             raise TrainerError(f"Error saving checkpoint: {str(e)}") from e
 
     def load_checkpoint(self, path: str, optimizer: Optional[Optimizer] = None) -> int:
-        """Load a training checkpoint
+        """Load a model training checkpoint.
         
         Args:
-            path: Path to load checkpoint from
-            optimizer: Optional optimizer to load state into
+            path: Path to load checkpoint from.
+            optimizer: Optional optimizer to load state into.
             
         Returns:
-            int: The epoch number from the checkpoint
+            int: The epoch number from the checkpoint.
+
+        Raises:
+            TrainerError: If loading fails.
         """
         try:
             checkpoint = torch.load(path, map_location=self.device, weights_only=True)

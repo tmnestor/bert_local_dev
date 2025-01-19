@@ -1,9 +1,10 @@
-from dataclasses import dataclass, fields, asdict, Field
-from pathlib import Path
-from typing import Any, Dict, Type, TypeVar, Optional, Union, get_type_hints
-import yaml
 import json
 from copy import deepcopy
+from dataclasses import Field, asdict, dataclass, fields
+from pathlib import Path
+from typing import Any, Dict, Optional, Type, TypeVar, Union, get_type_hints
+
+import yaml
 
 T = TypeVar('T', bound='BaseConfig')
 
@@ -68,13 +69,13 @@ class BaseConfig:
     @classmethod
     def load_yaml(cls: Type[T], path: Path) -> T:
         """Load config from YAML file"""
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             return cls.from_dict(yaml.safe_load(f))
 
     @classmethod
     def load_json(cls: Type[T], path: Path) -> T:
         """Load config from JSON file"""
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             return cls.from_dict(json.load(f))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -83,10 +84,10 @@ class BaseConfig:
 
     def save_yaml(self, path: Path) -> None:
         """Save config as YAML file"""
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             yaml.dump(self.to_dict(), f)
 
     def save_json(self, path: Path) -> None:
         """Save config as JSON file"""
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)

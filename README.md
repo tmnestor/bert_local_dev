@@ -89,7 +89,7 @@ python -m src.training.train \
     --max_seq_len 64 \
     --data_file "data/bbc-text.csv" \
     --bert_model_name "./bert_encoder" \
-    --architecture "standard"
+    --architecture "standard" #bypass previous models and train a new one
 ```
 
 ### 2. Hyperparameter Optimization

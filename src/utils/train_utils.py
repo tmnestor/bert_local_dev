@@ -1,15 +1,15 @@
-from typing import Tuple, List, Dict, Any, Union
-from pathlib import Path
-import torch
-from torch.utils.data import DataLoader
-from transformers import BertTokenizer
-from sklearn.model_selection import train_test_split
-import pandas as pd
-from sklearn.preprocessing import LabelEncoder
-from tqdm.auto import tqdm
 import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from ..config.config import ModelConfig 
+import pandas as pd
+import torch
+from sklearn.preprocessing import LabelEncoder
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+from transformers import AutoTokenizer
+
+from ..config.config import ModelConfig
 from ..training.dataset import TextClassificationDataset
 from ..utils.logging_manager import setup_logger
 from .data_splitter import DataSplitter, DataSplit
@@ -21,7 +21,26 @@ def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False)
     Tuple[List[str], List[str], List[int], List[int], LabelEncoder],  # Training mode
     Tuple[List[str], List[int], LabelEncoder]  # Validation mode
 ]:
-    """Load and preprocess data using DataSplitter"""
+    """Load and preprocess data using DataSplitter.
+
+    Args:
+        config: ModelConfig instance containing data parameters.
+        validation_mode: If True, return test set only.
+
+    Returns:
+        In training mode:
+            - train_texts, val_texts: Lists of text samples
+            - train_labels, val_labels: Lists of integer labels
+            - label_encoder: Fitted LabelEncoder
+        In validation mode:
+            - test_texts: List of text samples
+            - test_labels: List of integer labels
+            - label_encoder: Fitted LabelEncoder
+
+    Raises:
+        ValueError: If num_classes doesn't match dataset.
+        FileNotFoundError: If data file not found.
+    """
     splitter = DataSplitter(config.data_file.parent)
     
     try:
@@ -59,8 +78,23 @@ def create_dataloaders(
     batch_size: int,
     validation_mode: bool = False
 ) -> Union[Tuple[DataLoader, DataLoader], DataLoader]:
-    """Create dataloaders from texts and labels"""
-    tokenizer = BertTokenizer.from_pretrained(
+    """Create PyTorch DataLoaders for training or validation.
+
+    Args:
+        texts: Text samples or [train_texts, val_texts] in training mode.
+        labels: Labels or [train_labels, val_labels] in training mode.
+        config: ModelConfig instance.
+        batch_size: Batch size for DataLoader.
+        validation_mode: If True, create single test DataLoader.
+
+    Returns:
+        In training mode: (train_dataloader, val_dataloader)
+        In validation mode: test_dataloader
+
+    Raises:
+        ValueError: If texts/labels format is invalid.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(
         config.bert_model_name,
         clean_up_tokenization_spaces=True
     )
@@ -92,7 +126,15 @@ def create_dataloaders(
     )
 
 def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
-    """Initialize progress bars for training/tuning"""
+    """Initialize progress bars for training/tuning.
+
+    Args:
+        n_trials: Number of optimization trials.
+        num_epochs: Number of epochs per trial.
+
+    Returns:
+        Tuple of (trial_progress_bar, epoch_progress_bar).
+    """
     trial_pbar = tqdm(total=n_trials, desc='Trials', position=0)
     epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=False)
     return trial_pbar, epoch_pbar
@@ -103,7 +145,17 @@ def save_model_state(
     metric_value: float,
     config: Dict[str, Any]
 ) -> None:
-    """Save model checkpoint with metadata"""
+    """Save model checkpoint with metadata.
+
+    Args:
+        model_state: Model state dict.
+        save_path: Path to save checkpoint.
+        metric_value: Performance metric value.
+        config: Model configuration dict.
+
+    Raises:
+        IOError: If saving fails.
+    """
     save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         'model_state_dict': model_state,
@@ -114,6 +166,6 @@ def save_model_state(
 
 
 
-def log_separator(logger: logging.Logger) -> None:
+def log_separator(logger_instance: logging.Logger) -> None:
 
-    logger.info("\n" + "="*80)
+    logger_instance.info("\n" + "="*80)
