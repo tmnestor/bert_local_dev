@@ -13,8 +13,7 @@ from ..utils.train_utils import (
     load_and_preprocess_data,
     create_dataloaders,
     initialize_progress_bars,
-    save_model_state,
-    load_best_trial_info  # Add this import
+    save_model_state
 )
 from ..utils.logging_manager import setup_logger
 
@@ -79,68 +78,25 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> Op
     logger.info("\nNo previous optimization found. Using default configuration")
     return None
 
-from src.models.factory import ModelFactory
-from src.models.encoders import BERTEncoder
-from src.models.heads import StandardClassifierHead, PlaneResNetHead
-from ..utils.progress_manager import ProgressManager
-from ..utils.model_utils import format_model_info, count_parameters
-
-def train_model(model_config: ModelConfig, clf_config: dict = None, disable_pbar: bool = False):
+def train_model(model_config: ModelConfig, clf_config: dict = None):
     """Train a model with fixed or optimized configuration"""
     if clf_config is None:
-        # Try to load best trial info first
-        trial_info = load_best_trial_info(model_config.best_trials_dir, model_config.study_name)
-        if (trial_info and 'params' in trial_info):
-            clf_config = trial_info['params']
-            logger.info("Using configuration from best trial")
-            # Set architecture type in model_config immediately
-            arch_type = clf_config.get('architecture_type', 'standard').lower()
-            model_config.architecture = arch_type
-            logger.info(f"Setting architecture type to: {arch_type}")
-            
-            # Load model weights if available
-            model_path = trial_info['model_path']
-            if Path(model_path).exists():
-                logger.info("Found best trial model weights")
-                model_config.pretrained_weights = model_path
-        else:
-            clf_config = load_best_configuration(model_config.best_trials_dir)
+        clf_config = load_best_configuration(model_config.best_trials_dir)
         
     if clf_config is None:
         logger.info("Using default configuration")
         clf_config = {
-            'architecture_type': 'standard',  # Ensure architecture type is set
+            'architecture_type': 'standard',
             'num_layers': 2,
             'hidden_dim': 256,
             'learning_rate': model_config.learning_rate,
-            'weight_decay': model_config.weight_decay,
+            'weight_decay': 0.01,
             'activation': 'gelu',
             'regularization': 'dropout',
             'dropout_rate': 0.1,
             'cls_pooling': True,
             'batch_size': model_config.batch_size
         }
-        # Set the architecture in model_config to match clf_config
-        model_config.architecture = clf_config['architecture_type']
-    
-    # Initialize config parameters early with guaranteed defaults
-    training_params = {
-        'learning_rate': clf_config.get('learning_rate', model_config.learning_rate or 2e-5),
-        'weight_decay': 0.01,  # Set default first
-        'batch_size': max(2, clf_config.get('batch_size', model_config.batch_size or 16)),  # Ensure minimum batch size
-        'gradient_accumulation_steps': clf_config.get('gradient_accumulation_steps', 1),
-        'max_grad_norm': clf_config.get('max_grad_norm', 1.0)
-    }
-    
-    # Then override with config values if they exist
-    if 'weight_decay' in clf_config and clf_config['weight_decay'] is not None:
-        training_params['weight_decay'] = clf_config['weight_decay']
-    elif model_config.weight_decay is not None:
-        training_params['weight_decay'] = model_config.weight_decay
-    
-    # Ensure training params are set on model_config
-    for key, value in training_params.items():
-        setattr(model_config, key, value)
     
     # Load and preprocess data using utility function with train/val split
     train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
@@ -155,86 +111,49 @@ def train_model(model_config: ModelConfig, clf_config: dict = None, disable_pbar
         model_config.batch_size
     )
     
-    # Ensure all training parameters are set
-    model_config.weight_decay = clf_config.get('weight_decay', model_config.weight_decay)
+    # Initialize model and trainer
+    model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, clf_config)
+    trainer = Trainer(model, model_config)
     
-    # Calculate and set warmup steps before creating trainer
-    total_steps = len(train_dataloader) * model_config.num_epochs
-    model_config.warmup_steps = int(0.1 * total_steps)  # 10% of total steps
-    
-    # Create model using factory
-    model_params = {
-        'bert_model_name': model_config.bert_model_name,
-        'num_classes': model_config.num_classes,
-        'architecture_type': model_config.architecture,
-        'cls_pooling': True,
-        **clf_config
-    }
-    
-    try:
-        model = ModelFactory.create_model(model_params)
-        model = model.to(model_config.device)
-        
-        # Load pretrained weights if available
-        if model_config.pretrained_weights and Path(model_config.pretrained_weights).exists():
-            logger.info(f"Loading pretrained weights from {model_config.pretrained_weights}")
-            checkpoint = torch.load(model_config.pretrained_weights, map_location=model_config.device)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            
-            # Restore training mode if saved
-            if 'training' in checkpoint and checkpoint['training']:
-                model.train()
-            else:
-                model.eval()
-        
-        # Log detailed model information
-        logger.info("\n%s", format_model_info(model_params, model_params))
-        logger.info("%s", count_parameters(model))
-        
-    except Exception as e:
-        logger.error(f"Error creating model: {str(e)}")
-        raise
-    
-    # Initialize a trainer with progress manager
-    trainer = Trainer(model, model_config, disable_pbar=disable_pbar)
-    progress = ProgressManager(disable=disable_pbar)
-    
-    # Setup optimizer with guaranteed parameters
+    # Setup optimizer and scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=training_params['learning_rate'],
-        weight_decay=training_params['weight_decay']
+        lr=clf_config.get('learning_rate', model_config.learning_rate),
+        weight_decay=clf_config.get('weight_decay', 0.01)
     )
     
+    total_steps = len(train_dataloader) * model_config.num_epochs
+    warmup_steps = int(total_steps * 0.1)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=model_config.warmup_steps,  # Use the pre-calculated warmup steps
+        num_warmup_steps=warmup_steps,
         num_training_steps=total_steps
     )
     
-    # Setup training loop with progress tracking
+    # Initialize progress bars using utility function
+    epoch_pbar, batch_pbar = initialize_progress_bars(model_config.num_epochs, len(train_dataloader))
+    
+    # Training loop
     best_score = 0.0
     try:
-        epoch_bar = progress.init_epoch_bar(model_config.num_epochs, mode='train')
-        
         for epoch in range(model_config.num_epochs):
-            # Train with progress updates
-            loss = trainer.train_epoch(train_dataloader, optimizer, scheduler)
+            epoch_pbar.set_description(f"Epoch {epoch+1}/{model_config.num_epochs}")
+            
+            loss = trainer.train_epoch(train_dataloader, optimizer, scheduler, batch_pbar)
             score, _ = trainer.evaluate(val_dataloader)
             
-            # Update progress
-            progress.update_epoch(
-                epoch,
-                model_config.num_epochs,
-                {'loss': f'{loss:.4f}', 'score': f'{score:.4f}'}
-            )
+            epoch_pbar.set_postfix({
+                'loss': f'{loss:.4f}',
+                f'val_{model_config.metric}': f'{score:.4f}'
+            })
+            epoch_pbar.update(1)
             
             if score > best_score:
                 best_score = score
                 # Save model when new best score is achieved
                 save_model_state(
                     model.state_dict(),
-                    model_config.model_save_path,
+                    model_config.model_save_path,  # This is "best_trials/bert_classifier.pth"
                     score,
                     {
                         'epoch': epoch,
@@ -243,16 +162,13 @@ def train_model(model_config: ModelConfig, clf_config: dict = None, disable_pbar
                         'num_classes': model_config.num_classes
                     }
                 )
-                # Clear line and print improvement message
-                print('\r', end='')  # Clear current line
-                logger.info(f"[Epoch {epoch+1}/{model_config.num_epochs}] New best {model_config.metric}: {score:.4f}")
+                logger.info("\nSaved new best model with %s=%.4f", model_config.metric, score)
     
     finally:
-        progress.close_all()
-        print('\r', end='')  # Clear last progress bar line
+        epoch_pbar.close()
+        batch_pbar.close()
         
-    # Final summary on clean line
-    logger.info(f"\nTraining completed. Best {model_config.metric}: {best_score:.4f}")
+    logger.info("\nTraining completed. Best %s: %.4f", model_config.metric, best_score)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -260,7 +176,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
-    # Add all ModelConfig arguments including num_epochs and study_name
+    # Add all ModelConfig arguments including num_epochs
     ModelConfig.add_argparse_args(parser)
     
     # Add architecture type argument
@@ -277,9 +193,9 @@ def parse_args() -> argparse.Namespace:
     return args
 
 if __name__ == "__main__":
+    # Remove logging.basicConfig as it's handled by logging_manager
     args = parse_args()
     config = ModelConfig.from_args(args)
-    # study_name is now set from args in from_args()
     
     # Only create classifier_config if architecture is explicitly specified
     if args.architecture:

@@ -109,30 +109,6 @@ python -m src.evaluation.evaluator \
     --output_dir "evaluation_results"
 ```
 
-### 4. Cross Validation Model Evaluation
-```bash
-# Run with default settings (7-fold)
-python -m src.evaluation.evaluator \
-    --best_model best_trials/bert_classifier.pth \
-    --cross_validate
-
-# Run with custom settings
-python -m src.evaluation.evaluator \
-    --best_model best_trials/bert_classifier.pth \
-    --cross_validate \
-    --n_splits 5 \
-    --stratify \
-    --data_file "data/bbc-text.csv" \
-    --bert_model_name "./bert_encoder"
-
-# With custom settings
-python -m src.evaluation.evaluator \
-    --best_model best_trials/bert_classifier.pth \
-    --cross_validate \
-    --n_splits 5 \
-    --no-stratify  # Add this option if you want to disable stratification
-```
-
 ## Architecture Details
 
 ### Standard Classifier

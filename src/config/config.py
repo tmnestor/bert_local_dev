@@ -1,6 +1,6 @@
 import argparse
 import logging
-from dataclasses import dataclass, field, fields, MISSING  # Add this import
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -34,19 +34,6 @@ class ModelConfig(BaseConfig):
     metrics: List[str] = field(  # Multiple metrics for evaluation
         default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
     )
-    architecture: str = 'standard'  # Add architecture field if not present
-    warmup_steps: int = 0  # Changed from None to 0 for automatic calculation
-    weight_decay: float = 0.01  # Ensure default value is set
-    gradient_accumulation_steps: int = 1
-    max_grad_norm: float = 1.0
-    random_seed: Optional[int] = None  # Add random seed field
-
-    def __init__(self, **kwargs):
-        """Initialize ModelConfig with proper handling of study_name"""
-        # First initialize all dataclass fields using parent class
-        super().__init__(**kwargs)
-        # Then set study_name separately since it's not a dataclass field
-        self.study_name = kwargs.get('study_name', 'bert_optimization')
 
     def _validate_metrics(self, metrics: List[str]) -> None:
         """Validate metrics configuration"""
@@ -104,8 +91,6 @@ class ModelConfig(BaseConfig):
         system.add_argument('--metric', type=str, default=cls.metric,
                           choices=['f1', 'accuracy'],
                           help='Metric to use for model assessment')
-        system.add_argument('--random_seed', type=int, default=None,
-                          help='Random seed for reproducibility')
 
         # File paths
         paths = parser.add_argument_group('File Paths')
@@ -124,18 +109,11 @@ class ModelConfig(BaseConfig):
         experiment.add_argument('--trials_per_experiment', type=int, default=cls.trials_per_experiment,
                               help='Number of trials per experiment. If not set, uses n_trials')
 
-        # Add study configuration arguments
-        study_group = parser.add_argument_group('Study Configuration')
-        study_group.add_argument('--study_name', type=str, default='bert_optimization',
-                               help='Name for the optimization study')
-
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':
         """Create config from argparse namespace"""
         config_dict = {f.name: getattr(args, f.name, None) for f in fields(cls)}
-        config = cls.from_dict(config_dict)
-        config.study_name = args.study_name
-        return config
+        return cls.from_dict(config_dict)
 
     def validate(self) -> None:
         """Extended validation with parent validation"""
@@ -165,10 +143,6 @@ class ModelConfig(BaseConfig):
             raise ValueError("learning_rate must be between 0 and 1")
         if not (0.0 <= self.hidden_dropout <= 1.0):
             raise ValueError("hidden_dropout must be between 0 and 1")
-        if self.warmup_steps < 0:  # Updated validation
-            raise ValueError("warmup_steps cannot be negative")
-        if self.weight_decay < 0:
-            raise ValueError("weight_decay cannot be negative")
 
     def _validate_system_params(self) -> None:
         """Validate system-related parameters"""
@@ -195,17 +169,6 @@ class ModelConfig(BaseConfig):
         # Final validation of n_trials
         if self.n_trials < 1:
             raise ValueError("n_trials must be positive")
-
-    @property
-    def training_config(self):
-        return {
-            'learning_rate': self.learning_rate,
-            'num_epochs': self.num_epochs,
-            'warmup_steps': self.warmup_steps,
-            'weight_decay': self.weight_decay,
-            'gradient_accumulation_steps': self.gradient_accumulation_steps,
-            'max_grad_norm': self.max_grad_norm
-        }
 
 @dataclass
 class ValidationConfig(ModelConfig):

@@ -1,29 +1,16 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 import argparse
-import json
-import numpy as np
-import pandas as pd
 import torch
-from torch.utils.data import DataLoader
+import pandas as pd
 from sklearn.metrics import classification_report
 from tqdm.auto import tqdm
 
 from ..config.config import EvaluationConfig, ModelConfig
 from ..models.model import BERTClassifier
-from ..utils.metrics import compute_metrics
+from ..utils.metrics import calculate_metrics
 from ..utils.train_utils import load_and_preprocess_data, create_dataloaders
 from ..utils.logging_manager import setup_logger
-from ..utils.progress_manager import ProgressManager
-from ..models.factory import ModelFactory
-from .cross_validator import CrossValidator
-from ..utils.model_utils import format_model_info, count_parameters
-
-from sklearn.metrics import (
-    accuracy_score, f1_score, precision_score, recall_score,
-    classification_report
-)
-import numpy as np
 
 logger = setup_logger(__name__)
 
@@ -55,55 +42,85 @@ class ModelEvaluator:
         self.device = torch.device(config.device)
         self.metrics = getattr(config, 'metrics', self.DEFAULT_METRICS)
         self.model = self._load_model()
-        self.progress = ProgressManager()
         
     def _load_model(self) -> BERTClassifier:
-        """Load the trained model from checkpoint."""
+        """Load the trained model from checkpoint.
+        
+        Returns:
+            BERTClassifier: Loaded and configured model instance.
+            
+        Raises:
+            RuntimeError: If model loading fails.
+        """
+        logger.info(f"Loading model from: {self.model_path}")
+        
         try:
-            # Try full load first since our checkpoints contain configuration
-            checkpoint = torch.load(
-                self.model_path,
-                map_location=self.device,
-                weights_only=False  # Use full load for configuration
-            )
+            checkpoint = torch.load(self.model_path, map_location=self.device)
+            logger.info("Loaded checkpoint with keys: %s", list(checkpoint.keys()))
             
-            logger.info("Successfully loaded checkpoint")
-            
-            # Extract configurations
-            config_dict = checkpoint.get('config', {})
-            classifier_config = config_dict.get('classifier_config', {})
+            # Extract model state and config consistently
+            model_state = checkpoint['model_state_dict']
+            config_container = checkpoint.get('config', {})
+            classifier_config = config_container.get('classifier_config', {})
             num_classes = checkpoint.get('num_classes', self.config.num_classes)
             
-            # Create model params with all necessary configuration
-            model_params = {
-                'bert_model_name': self.config.bert_model_name,
-                'num_classes': num_classes,
-                'architecture_type': classifier_config.get('architecture_type', 'standard'),
-                'cls_pooling': True,
-                **classifier_config  # Include all classifier-specific config
-            }
+            # Log source and score
+            if 'study_name' in checkpoint:
+                logger.info("Loading model from optimization trial")
+                logger.info("Study: %s, Trial: %s, Score: %.4f", 
+                           checkpoint.get('study_name'),
+                           checkpoint.get('trial_number'),
+                           checkpoint.get('metric_value', float('nan')))
             
-            # Create model using factory
-            model = ModelFactory.create_model(model_params)
-            
-            # Load weights with weights_only=True
-            state_dict = checkpoint['model_state_dict']
-            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-            
-            if missing_keys:
-                logger.warning(f"Missing keys in state dict: {missing_keys}")
-            if unexpected_keys:
-                logger.warning(f"Unexpected keys in state dict: {unexpected_keys}")
-            
-            model = model.to(self.device)
+            # Create and load model
+            model = BERTClassifier(
+                self.config.bert_model_name,
+                num_classes,
+                classifier_config
+            )
+            model.load_state_dict(model_state)
+            model.to(self.device)
             model.eval()
             
-            # Log model information
-            logger.info("\nModel Architecture:")
+            # Enhanced logging of model architecture
+            logger.info("\nModel Architecture Details:")
             logger.info("-" * 50)
-            logger.info(f"Base Model: {self.config.bert_model_name}")
-            logger.info(f"Architecture Type: {model_params['architecture_type']}")
+            logger.info(f"BERT Model: {self.config.bert_model_name}")
+            logger.info(f"Architecture Type: {classifier_config['architecture_type']}")
             logger.info(f"Number of Classes: {num_classes}")
+            logger.info(f"CLS Pooling: {classifier_config['cls_pooling']}")
+            
+            if classifier_config['architecture_type'] == 'standard':
+                logger.info("\nStandard Classifier Configuration:")
+                logger.info(f"Number of Layers: {classifier_config['num_layers']}")
+                logger.info(f"Hidden Dimension: {classifier_config['hidden_dim']}")
+                logger.info(f"Activation: {classifier_config['activation']}")
+                logger.info(f"Regularization: {classifier_config['regularization']}")
+                if classifier_config['regularization'] == 'dropout':
+                    logger.info(f"Dropout Rate: {classifier_config['dropout_rate']}")
+                
+                # Log layer sizes
+                input_size = model.bert.config.hidden_size
+                logger.info("\nLayer Dimensions:")
+                logger.info(f"Input (BERT) -> {input_size}")
+                
+                # Calculate and log progression of layer sizes
+                current_size = input_size
+                if classifier_config['num_layers'] > 1:
+                    ratio = (classifier_config['hidden_dim'] / current_size) ** (1.0 / (classifier_config['num_layers'] - 1))
+                    for i in range(classifier_config['num_layers'] - 1):
+                        current_size = int(current_size * ratio)
+                        current_size = max(current_size, classifier_config['hidden_dim'])
+                        logger.info(f"Hidden Layer {i+1} -> {current_size}")
+                logger.info(f"Output Layer -> {num_classes}")
+                
+            else:  # plane_resnet
+                logger.info("\nPlaneResNet Configuration:")
+                logger.info(f"Number of Planes: {classifier_config['num_planes']}")
+                logger.info(f"Plane Width: {classifier_config['plane_width']}")
+                logger.info(f"Input Size: {model.bert.config.hidden_size}")
+                logger.info(f"Output Size: {num_classes}")
+            
             logger.info("-" * 50)
             
             return model
@@ -111,46 +128,28 @@ class ModelEvaluator:
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}") from e
     
-    def evaluate(
-        self,
-        save_predictions: bool = True,
-        output_dir: Optional[Path] = None,
-        cross_validate: bool = False,
-        n_splits: int = 7,
-        stratify: bool = True,
-        **kwargs
-    ) -> Tuple[Dict[str, float], pd.DataFrame]:
-        """Evaluate model on test dataset."""
-        output_dir = output_dir or Path("evaluation_results")
-        output_dir.mkdir(parents=True, exist_ok=True)
+    def evaluate(self, 
+                save_predictions: bool = True,
+                output_dir: Optional[Path] = None) -> Tuple[Dict[str, float], pd.DataFrame]:
+        """Evaluate model on test dataset.
         
+        Args:
+            save_predictions (bool, optional): Whether to save predictions to files.
+                Defaults to True.
+            output_dir (Optional[Path], optional): Directory to save results.
+                Defaults to None, which creates 'evaluation_results' directory.
+        
+        Returns:
+            Tuple[Dict[str, float], pd.DataFrame]: Tuple containing:
+                - Dictionary of evaluation metrics
+                - DataFrame with predictions and ground truth
+        """
         # Load test data
         test_texts, test_labels, label_encoder = load_and_preprocess_data(
             self.config, validation_mode=True
         )
         
-        if cross_validate:
-            # Convert labels to numpy array if they aren't already
-            if isinstance(test_labels, (list, pd.Series)):
-                test_labels = np.array(test_labels)
-            
-            # Initialize cross-validator
-            validator = CrossValidator(n_splits=int(n_splits))  # Ensure integer type
-            
-            # Run cross-validation directly on the data
-            cv_results = validator.validate(
-                model=self.model,
-                X=test_texts,
-                y=test_labels
-            )
-            
-            # Save detailed results if requested
-            if save_predictions and output_dir:
-                self._save_cv_results(cv_results, output_dir)
-            
-            return cv_results, pd.DataFrame()
-        
-        # Regular evaluation code remains unchanged
+        # Create test dataloader
         test_dataloader = create_dataloaders(
             test_texts,
             test_labels,
@@ -159,148 +158,73 @@ class ModelEvaluator:
             validation_mode=True
         )
         
-        if cross_validate:
-            # Initialize cross-validator with correct arguments
-            validator = CrossValidator(self.model)  # Pass model as positional argument
-            
-            # Run cross-validation
-            cv_results = validator.run_cv(
-                test_dataloader,
-                n_splits=n_splits,
-                label_encoder=label_encoder
-            )
-            
-            # Save detailed results if requested
-            if save_predictions and output_dir:
-                self._save_cv_results(cv_results, output_dir)
-            
-            return cv_results, pd.DataFrame()
-        
-        # Regular evaluation
-        return self._evaluate_single(test_dataloader, save_predictions, output_dir)
-    
-    def _save_cv_results(self, results: Dict, output_dir: Path) -> None:
-        """Save cross-validation results"""
-        # Save detailed metrics
-        metrics_file = output_dir / 'cv_metrics.json'
-        with open(metrics_file, 'w') as f:
-            json.dump(results, f, indent=2)
-        
-        # Save confusion matrices if available
-        if 'confusion_matrices' in results:
-            matrices_file = output_dir / 'cv_confusion_matrices.npy'
-            np.save(matrices_file, results['confusion_matrices'])
-        
-        logger.info(f"Saved cross-validation results to {output_dir}")
-    
-    def _evaluate_single(self, 
-                        dataloader: DataLoader,
-                        save_predictions: bool = True,
-                        output_dir: Optional[Path] = None) -> Tuple[Dict[str, float], pd.DataFrame]:
-        """Perform single evaluation pass"""
-        self.model.eval()
-        all_predictions = []
+        # Evaluate
+        all_preds = []
         all_labels = []
-        eval_bar = tqdm(total=len(dataloader), desc="Evaluating", leave=False)
+        all_probs = []
         
-        try:
-            with torch.no_grad():
-                for batch in dataloader:
-                    outputs = self.model(
-                        input_ids=batch['input_ids'].to(self.device),
-                        attention_mask=batch['attention_mask'].to(self.device)
-                    )
-                    _, preds = torch.max(outputs.logits, dim=1)
-                    all_predictions.extend(preds.cpu().numpy())
-                    all_labels.extend(batch['label'].cpu().numpy())
-                    eval_bar.update(1)
-
-            # Convert to numpy arrays
-            predictions = np.array(all_predictions)
-            labels = np.array(all_labels)
-
-            # Calculate metrics
-            metrics = {}
-            for metric_name in self.metrics:
-                if metric_name == 'accuracy':
-                    metrics['accuracy'] = accuracy_score(labels, predictions)
-                elif metric_name == 'f1':
-                    metrics['f1'] = f1_score(labels, predictions, average='macro')
-                elif metric_name == 'precision':
-                    metrics['precision'] = precision_score(labels, predictions, average='macro')
-                elif metric_name == 'recall':
-                    metrics['recall'] = recall_score(labels, predictions, average='macro')
-
-            # Create predictions DataFrame
-            predictions_df = pd.DataFrame({
-                'true_label': labels,
-                'predicted_label': predictions
-            })
-
-            # Save results if requested
-            if save_predictions and output_dir:
-                self._save_evaluation_results(metrics, predictions_df, output_dir)
-
-            return metrics, predictions_df
-
-        except Exception as e:
-            logger.error(f"Evaluation failed: {str(e)}")
-            raise
-            
-        finally:
-            eval_bar.close()
-    
-    def _save_evaluation_results(self,
-                               metrics: Dict[str, float],
-                               predictions_df: pd.DataFrame,
-                               output_dir: Path) -> None:
-        """Save evaluation results to files"""
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save metrics
-        metrics_file = output_dir / 'metrics.json'
-        with open(metrics_file, 'w') as f:
-            json.dump(metrics, f, indent=2)
-            
-        # Save predictions
-        predictions_file = output_dir / 'predictions.csv'
-        predictions_df.to_csv(predictions_file, index=False)
-        
-        # Save classification report
-        report = classification_report(
-            predictions_df['true_label'],
-            predictions_df['predicted_label']
-        )
-        report_file = output_dir / 'classification_report.txt'
-        with open(report_file, 'w') as f:
-            f.write(report)
-            
-        logger.info(f"\nSaved evaluation results to {output_dir}")
-        logger.info("\nMetrics:")
-        for metric, value in metrics.items():
-            logger.info(f"{metric}: {value:.4f}")
-
-    def get_predictions(self, dataloader: DataLoader) -> np.ndarray:
-        """Get model predictions for a dataloader"""
-        self.model.eval()
-        predictions = []
-        
+        logger.info("Starting evaluation...")
         with torch.no_grad():
-            for batch in dataloader:
-                outputs = self.model(
-                    input_ids=batch['input_ids'].to(self.device),
-                    attention_mask=batch['attention_mask'].to(self.device)
-                )
-                _, preds = torch.max(outputs.logits, dim=1)
-                predictions.extend(preds.cpu().numpy())
+            for batch in tqdm(test_dataloader, desc="Evaluating"):
+                # Move batch to device
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                labels = batch['label']
                 
-        return np.array(predictions)
-    
-    def run_cross_validation(self, n_splits: int = 7):
-        """Run cross-validation evaluation"""
-        test_dataloader = self._create_test_dataloader()
-        validator = CrossValidator(self, n_splits)
-        return validator.run_cross_validation(test_dataloader)
+                # Get predictions
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
+                
+                # Store results
+                all_preds.extend(preds.cpu().tolist())
+                all_labels.extend(labels.tolist())
+                all_probs.extend(probs.cpu().tolist())
+        
+        # Calculate metrics using the class metrics list
+        metrics = calculate_metrics(all_labels, all_preds, self.metrics)
+        
+        # Create detailed results DataFrame
+        results_df = pd.DataFrame({
+            'text': test_texts,
+            'true_label': label_encoder.inverse_transform(all_labels),
+            'predicted_label': label_encoder.inverse_transform(all_preds),
+            'confidence': [max(probs) for probs in all_probs]
+        })
+        
+        # Save results if requested
+        if save_predictions:
+            output_dir = output_dir or Path("evaluation_results")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save predictions
+            results_df.to_csv(output_dir / 'test_predictions.csv', index=False)
+            
+            # Save detailed classification report
+            report = classification_report(
+                all_labels, all_preds,
+                target_names=label_encoder.classes_,
+                output_dict=True
+            )
+            pd.DataFrame(report).to_csv(output_dir / 'classification_report.csv')
+            
+            # Save confusion matrix
+            confusion_df = pd.crosstab(
+                results_df['true_label'],
+                results_df['predicted_label'],
+                margins=True
+            )
+            confusion_df.to_csv(output_dir / 'confusion_matrix.csv')
+            
+            # Log results
+            logger.info("\nEvaluation Results:")
+            for metric, value in metrics.items():
+                logger.info(f"{metric}: {value:.4f}")
+            
+            logger.info("\nConfusion Matrix:")
+            logger.info("\n" + str(confusion_df))
+            
+        return metrics, results_df
 
     @classmethod
     def from_config(cls, config: EvaluationConfig) -> 'ModelEvaluator':
@@ -319,57 +243,45 @@ class ModelEvaluator:
 
     @classmethod
     def add_model_args(cls, parser: argparse.ArgumentParser) -> None:
-        """Add model-specific arguments to argument parser."""
+        """Add model-specific arguments to argument parser.
+        
+        Args:
+            parser (argparse.ArgumentParser): Argument parser to extend.
+        """
         model_args = parser.add_argument_group('Model Configuration')
-        model_args.add_argument(
-            '--device', 
-            type=str, 
-            default='cpu',
-            choices=['cpu', 'cuda'],
-            help='Device to use for inference'
-        )
-        model_args.add_argument(
-            '--batch_size', 
-            type=int, 
-            default=32,
-            help='Batch size for evaluation'
-        )
-
-def parse_args() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='Evaluate BERT Classifier')
-    
-    # Add base model configuration arguments
-    ModelConfig.add_argparse_args(parser)
-    
-    # Add evaluation-specific arguments
-    eval_group = parser.add_argument_group('Evaluation')
-    eval_group.add_argument('--best_model', type=Path,
-                          help='Path to trained model checkpoint')
-    eval_group.add_argument('--output_dir', type=Path, 
-                          default=Path('evaluation_results'),
-                          help='Directory to save evaluation results')
-    eval_group.add_argument('--metrics', nargs='+', type=str,
-                          default=['accuracy', 'f1', 'precision', 'recall'],
-                          choices=['accuracy', 'f1', 'precision', 'recall'],
-                          help='Metrics to compute')
-    
-    # Add cross-validation arguments
-    cv_group = parser.add_argument_group('Cross-validation')
-    cv_group.add_argument('--cross_validate', '-cv', action='store_true',
-                         help='Perform cross-validation')
-    cv_group.add_argument('--n_splits', type=int, default=7,
-                         help='Number of folds for cross-validation')
-    cv_group.add_argument('--stratify', action='store_true',
-                         help='Use stratified sampling for cross-validation')
-    
-    return parser.parse_args()
+        model_args.add_argument('--device', type=str, default='cpu',
+                              choices=['cpu', 'cuda'],
+                              help='Device to use for inference')
+        model_args.add_argument('--batch_size', type=int, default=32,
+                              help='Batch size for evaluation')
 
 def main():
-    """Command-line interface entry point for model evaluation."""
-    args = parse_args()
+    """Command-line interface entry point for model evaluation.
+    
+    Raises:
+        Exception: If evaluation fails.
+    """
+    parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
+    
+    # Add all ModelConfig arguments first
+    ModelConfig.add_argparse_args(parser)
+    
+    # Add evaluator-specific arguments
+    parser.add_argument('--best_model', type=Path, required=True,
+                       help='Path to best model checkpoint')
+    parser.add_argument('--output_dir', type=Path, default=Path('evaluation_results'),
+                       help='Directory to save evaluation results')
+    parser.add_argument('--metrics', nargs='+', type=str,
+                       default=ModelEvaluator.DEFAULT_METRICS,
+                       choices=ModelEvaluator.DEFAULT_METRICS,
+                       help='Metrics to compute')
+    
+    args = parser.parse_args()
+    
+    # Create full config from all parsed args
     config = ModelConfig.from_args(args)
     
-    # Add evaluation-specific settings to config
+    # Update with evaluation-specific settings
     config.best_model = args.best_model
     config.output_dir = args.output_dir
     config.metrics = args.metrics
@@ -377,25 +289,11 @@ def main():
     try:
         logger.info(f"Loading model from: {config.best_model}")
         evaluator = ModelEvaluator.from_config(config)
-        
-        if args.cross_validate:
-            logger.info(f"\nPerforming {args.n_splits}-fold cross-validation")
-            metrics = evaluator.evaluate(
-                cross_validate=True,
-                n_splits=args.n_splits,
-                stratify=args.stratify,
-                save_predictions=True,
-                output_dir=config.output_dir
-            )
-        else:
-            # Regular evaluation
-            metrics, _ = evaluator.evaluate(
-                save_predictions=True,
-                output_dir=config.output_dir
-            )
-            
+        metrics, _ = evaluator.evaluate(
+            save_predictions=True,
+            output_dir=config.output_dir
+        )
         logger.info("Evaluation completed successfully")
-        
     except Exception as e:
         logger.error(f"Evaluation failed: {str(e)}", exc_info=True)
         raise
