@@ -1,6 +1,6 @@
 import json
 from copy import deepcopy
-from dataclasses import Field, asdict, dataclass, fields
+from dataclasses import Field, asdict, dataclass, fields, MISSING
 from pathlib import Path
 from typing import Any, Dict, Optional, Type, TypeVar, Union, get_type_hints
 
@@ -12,6 +12,25 @@ T = TypeVar('T', bound='BaseConfig')
 class BaseConfig:
     """Base configuration class with validation and serialization support"""
     
+    def __init__(self, **kwargs):
+        """Initialize configuration with proper field default handling"""
+        # Get all fields including inherited ones
+        class_fields = fields(self.__class__)
+        
+        # First set defaults
+        for field in class_fields:
+            if field.default_factory is not MISSING:
+                setattr(self, field.name, field.default_factory())
+            elif field.default is not MISSING:
+                setattr(self, field.name, field.default)
+            else:
+                setattr(self, field.name, None)
+        
+        # Then update with provided values
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
     def validate(self) -> None:
         """Validate configuration parameters"""
         type_hints = get_type_hints(self.__class__)

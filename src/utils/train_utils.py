@@ -76,7 +76,8 @@ def create_dataloaders(
     labels: List[int],
     config: ModelConfig,
     batch_size: int,
-    validation_mode: bool = False
+    validation_mode: bool = False,
+    drop_last: bool = True  # Change default to True
 ) -> Union[Tuple[DataLoader, DataLoader], DataLoader]:
     """Create PyTorch DataLoaders for training or validation.
 
@@ -86,6 +87,7 @@ def create_dataloaders(
         config: ModelConfig instance.
         batch_size: Batch size for DataLoader.
         validation_mode: If True, create single test DataLoader.
+        drop_last: If True, drop the last incomplete batch.
 
     Returns:
         In training mode: (train_dataloader, val_dataloader)
@@ -104,7 +106,7 @@ def create_dataloaders(
             texts, labels, tokenizer, 
             max_seq_len=config.max_seq_len  # Updated from max_length
         )
-        return DataLoader(test_dataset, batch_size=batch_size)
+        return DataLoader(test_dataset, batch_size=batch_size, drop_last=drop_last)
     
     # For training, texts and labels are passed as lists containing train and val splits
     if not isinstance(texts, (list, tuple)) or len(texts) != 2:
@@ -119,10 +121,22 @@ def create_dataloaders(
     train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_seq_len)
     val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_seq_len)
     
-    # Create and return dataloaders
+    # Ensure minimum batch size
+    effective_batch_size = max(2, batch_size)  # Minimum batch size of 2
+    
+    # Create and return dataloaders with consistent batch handling
     return (
-        DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
-        DataLoader(val_dataset, batch_size=batch_size)
+        DataLoader(
+            train_dataset, 
+            batch_size=effective_batch_size, 
+            shuffle=True, 
+            drop_last=True  # Always drop last for training
+        ),
+        DataLoader(
+            val_dataset, 
+            batch_size=effective_batch_size, 
+            drop_last=False  # Keep all samples for validation
+        )
     )
 
 def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
@@ -164,8 +178,28 @@ def save_model_state(
         'num_classes': config['num_classes']
     }, save_path)
 
-
+def load_best_trial_info(best_trials_dir: Path, study_name: str) -> Optional[dict]:
+    """Load information about best trial from optimization."""
+    trial_path = best_trials_dir / f"best_trial_{study_name}.pt"
+    if not trial_path.exists():
+        return None
+        
+    try:
+        # Use weights_only=False since we need to load configuration data
+        trial_info = torch.load(trial_path, map_location='cpu', weights_only=False)
+        logger.info("Loaded best trial info:")
+        logger.info("  Score: %.4f", trial_info['value'])
+        logger.info("  Trial: %d", trial_info['number'])
+        logger.info("  Model: %s", trial_info['model_path'])
+        
+        # Ensure architecture_type is present in params
+        if 'params' in trial_info and 'architecture_type' not in trial_info['params']:
+            trial_info['params']['architecture_type'] = 'standard'  # Set default
+            
+        return trial_info
+    except Exception as e:
+        logger.error(f"Failed to load trial info: {e}")
+        return None
 
 def log_separator(logger_instance: logging.Logger) -> None:
-
     logger_instance.info("\n" + "="*80)

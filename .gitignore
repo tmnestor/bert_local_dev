@@ -72,3 +72,4 @@ env/
 # BERT MODELS
 
 bert_encoder/
+modernbert_encoder/

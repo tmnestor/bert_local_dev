@@ -1,31 +1,42 @@
-from typing import List, Dict
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from typing import Dict, List, Union, Optional
+import numpy as np
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
-def calculate_metrics(true_labels: List[str], pred_labels: List[str], metrics: List[str]) -> Dict[str, float]:
-    """Calculate specified evaluation metrics.
+def compute_metrics(
+    predictions: Union[List, np.ndarray],
+    labels: Union[List, np.ndarray],
+    average: str = 'macro'
+) -> Dict[str, float]:
+    """Compute classification metrics.
     
     Args:
-        true_labels (List[str]): Ground truth labels.
-        pred_labels (List[str]): Model predicted labels.
-        metrics (List[str]): List of metric names to compute.
-    
+        predictions: Model predictions
+        labels: True labels
+        average: Averaging strategy for multi-class metrics ('macro', 'micro', 'weighted')
+        
     Returns:
-        Dict[str, float]: Dictionary containing metric name to score mappings.
-            Supported metrics include:
-            - 'accuracy': Classification accuracy
-            - 'f1': Weighted F1 score
-            - 'precision': Weighted precision
-            - 'recall': Weighted recall
+        Dictionary containing computed metrics:
+            - accuracy: Overall accuracy
+            - precision: Precision score
+            - recall: Recall score
+            - f1: F1 score
     """
-    metric_funcs = {
-        'accuracy': accuracy_score,
-        'f1': lambda y_true, y_pred: f1_score(y_true, y_pred, average='weighted'),
-        'precision': lambda y_true, y_pred: precision_score(y_true, y_pred, average='weighted'),
-        'recall': lambda y_true, y_pred: recall_score(y_true, y_pred, average='weighted')
-    }
+    if isinstance(predictions, list):
+        predictions = np.array(predictions)
+    if isinstance(labels, list):
+        labels = np.array(labels)
+        
+    accuracy = accuracy_score(labels, predictions)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels,
+        predictions,
+        average=average,
+        zero_division=0
+    )
     
     return {
-        metric: metric_funcs[metric](true_labels, pred_labels)
-        for metric in metrics
-        if metric in metric_funcs
+        'accuracy': float(accuracy),
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1': float(f1)
     }
