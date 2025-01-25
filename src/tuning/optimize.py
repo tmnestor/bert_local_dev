@@ -319,11 +319,12 @@ def objective(trial: optuna.Trial,
             no_improve_count = 0
             trial_best_score = score
             trial_best_state = {
-                'model_state': model.state_dict().copy(),
+                'model_state': {k: v.cpu().clone() for k, v in model.state_dict().items()},
                 'config': classifier_config.copy(),
                 f'{model_config.metric}_score': trial_best_score,
                 'trial_number': trial.number,
-                'params': trial.params.copy()
+                'params': trial.params.copy(),
+                'epoch': epoch  # Add epoch information
             }
             # Update global best if better
             if trial_best_score > best_model_info['score']:
@@ -445,4 +446,5 @@ if __name__ == "__main__":
         logger.info("\nAll experiments completed successfully")
     except Exception as e:
         logger.error("Error during optimization: %s", str(e), exc_info=True)
+        raise
         raise

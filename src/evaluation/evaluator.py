@@ -204,6 +204,14 @@ class ModelEvaluator:
         # Calculate metrics using the class metrics list
         metrics = calculate_metrics(all_labels, all_preds, self.metrics)
         
+        # Log comparison with optimization metric if available
+        if hasattr(self, 'optimization_metric_value'):
+            logger.info("\nMetric Comparison:")
+            logger.info("Optimization Score: %.4f", self.optimization_metric_value)
+            logger.info("Evaluation Score: %.4f", metrics.get(self.config.metric, float('nan')))
+            if abs(self.optimization_metric_value - metrics.get(self.config.metric, 0)) > 0.05:
+                logger.warning("Large discrepancy between optimization and evaluation scores!")
+        
         # Create detailed results DataFrame
         results_df = pd.DataFrame({
             'text': test_texts,

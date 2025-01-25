@@ -58,6 +58,13 @@ def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False)
     elif config.num_classes != splits.num_classes:
         raise ValueError(f"Specified num_classes ({config.num_classes}) does not match dataset ({splits.num_classes})")
     
+    logger.info("\nData Split Information:")
+    total = len(splits.train_texts) + len(splits.val_texts) + len(splits.test_texts)
+    logger.info("Total samples: %d", total)
+    logger.info("Training: %d (%.1f%%)", len(splits.train_texts), 100 * len(splits.train_texts) / total)
+    logger.info("Validation: %d (%.1f%%)", len(splits.val_texts), 100 * len(splits.val_texts) / total)
+    logger.info("Test: %d (%.1f%%)", len(splits.test_texts), 100 * len(splits.test_texts) / total)
+    
     if validation_mode:
         logger.info(f"Using test set with {len(splits.test_texts)} samples")
         return splits.test_texts, splits.test_labels, splits.label_encoder

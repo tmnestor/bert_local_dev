@@ -109,6 +109,10 @@ class Trainer:
             
         try:
             self.model.eval()
+            # Verify evaluation mode
+            for module in self.model.modules():
+                if isinstance(module, (nn.Dropout, nn.BatchNorm1d)):
+                    assert not module.training, f"{type(module).__name__} should be in eval mode"
             predictions = []
             actual_labels = []
             
