@@ -137,15 +137,18 @@ class BERTClassifier(nn.Module):
             
             if not isinstance(config['plane_width'], int) or config['plane_width'] & (config['plane_width'] - 1) != 0:
                 raise ValueError("plane_width must be a power of 2")
+            
+            # Remove regularization choice for plane_resnet - always uses batchnorm
+            if 'regularization' in config:
+                del config['regularization']
         else:
-            required_keys = ['num_layers', 'hidden_dim', 'activation', 'regularization', 'dropout_rate', 'cls_pooling']
+            required_keys = ['num_layers', 'hidden_dim', 'activation', 'dropout_rate', 'cls_pooling']
             if not all(key in config for key in required_keys):
                 raise ValueError(f"Missing required keys in classifier_config. Required: {required_keys}")
             
             if not isinstance(config['num_layers'], int) or config['num_layers'] < 1:
                 raise ValueError("num_layers must be a positive integer")
             
-            # Add validation for hidden_dim
             if not isinstance(config['hidden_dim'], int) or config['hidden_dim'] < 1:
                 raise ValueError("hidden_dim must be a positive integer")
             
@@ -153,15 +156,19 @@ class BERTClassifier(nn.Module):
             if config['activation'] not in valid_activations:
                 raise ValueError(f"activation must be one of {valid_activations}")
             
-            valid_regularizations = ['dropout', 'batchnorm']
-            if config['regularization'] not in valid_regularizations:
-                raise ValueError(f"regularization must be one of {valid_regularizations}")
-            
             if not isinstance(config['dropout_rate'], float) or not 0 <= config['dropout_rate'] <= 1:
                 raise ValueError("dropout_rate must be a float between 0 and 1")
             
-            if not isinstance(config['cls_pooling'], bool):
-                raise ValueError("cls_pooling must be a boolean")
+            # Remove regularization choice for standard - always uses dropout
+            if 'regularization' in config:
+                del config['regularization']
+
+    def _get_regularization(self, size: int, architecture_type: str, dropout_rate: float = 0.1) -> nn.Module:
+        """Get regularization layer based on architecture type."""
+        if architecture_type == 'plane_resnet':
+            return nn.BatchNorm1d(size)
+        else:  # standard architecture
+            return nn.Dropout(dropout_rate)
 
     def _build_classifier(self, input_size: int, num_classes: int, config: Dict[str, Any]) -> nn.Module:
         if config['architecture_type'] == 'plane_resnet':
@@ -171,6 +178,7 @@ class BERTClassifier(nn.Module):
             logger.info("  Plane width: %d", config['plane_width'])
             logger.info("  Number of planes: %d", config['num_planes'])
             logger.info("  Output size: %d", num_classes)
+            logger.info("  Regularization: BatchNorm")  # Added this line
             
             return PlaneResNetHead(
                 input_size=input_size,
@@ -189,9 +197,7 @@ class BERTClassifier(nn.Module):
             logger.info("  Hidden layers: %s", len(layer_sizes) - 2)
             logger.info("  Hidden dimension: %s", config['hidden_dim'])
             logger.info("  Activation: %s", config['activation'])
-            logger.info("  Regularization: %s", config['regularization'])
-            if config['regularization'] == 'dropout':
-                logger.info("  Dropout rate:: %s", config['dropout_rate'])
+            logger.info("  Regularization: Dropout (rate: %s)", config['dropout_rate'])  # Changed this line
             
             layers = []
             for i in range(len(layer_sizes) - 1):
@@ -201,7 +207,7 @@ class BERTClassifier(nn.Module):
                 layers.append(nn.Linear(current_size, next_size))
                 if i < len(layer_sizes) - 2:  # Hidden layer
                     layers.append(self._get_activation(config['activation']))
-                    layers.append(self._get_regularization(config['regularization'], config['dropout_rate'], next_size))
+                    layers.append(self._get_regularization(next_size, 'standard', config['dropout_rate']))
             
             return nn.Sequential(*layers)
 
@@ -239,13 +245,6 @@ class BERTClassifier(nn.Module):
         }
         return activation_map[activation]()
     
-    def _get_regularization(self, regularization: str, dropout_rate: float, size: int) -> nn.Module:
-        if regularization == 'dropout':
-            return nn.Dropout(dropout_rate)
-        elif regularization == 'batchnorm':
-            return nn.BatchNorm1d(size)
-        return nn.Identity()
-
     def _mean_pooling(self, model_output: Dict[str, torch.Tensor], attention_mask: torch.Tensor) -> torch.Tensor:
         token_embeddings = model_output[0] #First element of model_output contains all token embeddings
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
@@ -266,6 +265,23 @@ class BERTClassifier(nn.Module):
             RuntimeError: If there's an error during forward pass.
         """
         try:
+            # Add more detailed mode logging
+            if not self.training:
+                # Check and log dropout and batchnorm states
+                dropout_states = []
+                batchnorm_states = []
+                for name, module in self.named_modules():
+                    if isinstance(module, nn.Dropout):
+                        dropout_states.append(f"{name}: {'enabled' if module.training else 'disabled'}")
+                    elif isinstance(module, nn.BatchNorm1d):
+                        batchnorm_states.append(f"{name}: {'training' if module.training else 'eval'}")
+                
+                if not hasattr(self, '_logged_eval_mode'):
+                    logger.info("Model evaluation mode states:")
+                    logger.info("Dropout layers: %s", ', '.join(dropout_states))
+                    logger.info("BatchNorm layers: %s", ', '.join(batchnorm_states))
+                    self._logged_eval_mode = True
+
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
             if self.classifier_config['cls_pooling']:
                 last_hidden_state = outputs[0]

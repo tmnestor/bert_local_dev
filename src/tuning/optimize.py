@@ -194,7 +194,9 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
         'study_name': trial_study_name,
         'trial_number': best_model_info['trial_number'],
         'num_classes': model_config.num_classes,
-        'hyperparameters': best_model_info['params']
+        'hyperparameters': best_model_info['params'],
+        'val_size': 0.2,  # Add validation split size
+        'metric': model_config.metric  # Add which metric was optimized
     }
     torch.save(save_dict, final_model_path)
     logger.info("Best trial metric (%s): %s", metric_key, best_model_info[metric_key])
@@ -236,6 +238,16 @@ def objective(trial: optuna.Trial,
         texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
     )
     
+    if trial.number == 0:  # Log only for first trial
+        logger.info("\nOptimization Data Split:")
+        logger.info("Training set size: %d samples", len(train_texts))
+        logger.info("Validation set size: %d samples", len(val_texts))
+        logger.info("Label distribution in validation set:")
+        unique_labels, counts = np.unique(val_labels, return_counts=True)
+        for label, count in zip(range(len(unique_labels)), counts):
+            logger.info("  Class %d: %d samples (%.2f%%)", 
+                       label, count, 100 * count/len(val_labels))
+    
     train_dataloader, val_dataloader = create_dataloaders(
         [train_texts, val_texts],
         [train_labels, val_labels],
@@ -266,7 +278,6 @@ def objective(trial: optuna.Trial,
             'num_layers': trial.suggest_int('std/num_layers', 1, 4),
             'hidden_dim': trial.suggest_categorical('std/hidden_dim', [32, 64, 128, 256, 512, 1024]),
             'activation': trial.suggest_categorical('std/activation', ['gelu', 'relu']),
-            'regularization': trial.suggest_categorical('std/regularization', ['dropout', 'batchnorm']),
             'dropout_rate': trial.suggest_float('std/dropout_rate', 0.1, 0.5),
             'warmup_ratio': trial.suggest_float('std/warmup_ratio', 0.0, 0.2)
         })

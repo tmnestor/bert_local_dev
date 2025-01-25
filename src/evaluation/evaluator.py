@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 import argparse
 import torch
+import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report
 from tqdm.auto import tqdm
@@ -37,96 +38,106 @@ class ModelEvaluator:
             model_path (Path): Path to the saved model checkpoint.
             config (Union[EvaluationConfig, ModelConfig]): Model configuration.
         """
-        self.model_path = Path(model_path)
+        self.model_path = Path(model_path)  # Store model_path directly in the instance
         self.config = config
         self.device = torch.device(config.device)
         self.metrics = getattr(config, 'metrics', self.DEFAULT_METRICS)
         self.model = self._load_model()
         
     def _load_model(self) -> BERTClassifier:
-        """Load the trained model from checkpoint.
-        
-        Returns:
-            BERTClassifier: Loaded and configured model instance.
-            
-        Raises:
-            RuntimeError: If model loading fails.
-        """
-        logger.info(f"Loading model from: {self.model_path}")
-        
+        """Load model from checkpoint."""
         try:
+            logger.info(f"\nLoading model from checkpoint: {self.model_path}")
             checkpoint = torch.load(self.model_path, map_location=self.device)
-            logger.info("Loaded checkpoint with keys: %s", list(checkpoint.keys()))
+            classifier_config = checkpoint['config']['classifier_config']
             
-            # Extract model state and config consistently
-            model_state = checkpoint['model_state_dict']
-            config_container = checkpoint.get('config', {})
-            classifier_config = config_container.get('classifier_config', {})
-            num_classes = checkpoint.get('num_classes', self.config.num_classes)
+            # Log model selection details
+            logger.info("\nModel Selection Details:")
+            logger.info("Checkpoint file: %s", self.model_path)
+            logger.info("Model file size: %.2f MB", self.model_path.stat().st_size / (1024 * 1024))
+            logger.info("Checkpoint keys: %s", list(checkpoint.keys()))
             
-            # Log source and score
-            if 'study_name' in checkpoint:
-                logger.info("Loading model from optimization trial")
-                logger.info("Study: %s, Trial: %s, Score: %.4f", 
-                           checkpoint.get('study_name'),
-                           checkpoint.get('trial_number'),
-                           checkpoint.get('metric_value', float('nan')))
+            # Enhanced logging of model details
+            logger.info("\nOptimization History:")
+            logger.info("Study Name: %s", checkpoint.get('study_name', 'N/A'))
+            logger.info("Trial Number: %s", checkpoint.get('trial_number', 'N/A'))
+            logger.info("Optimization Metric: %s", checkpoint.get('metric', 'N/A'))
+            logger.info("Best Optimization Score: %.4f", checkpoint.get('metric_value', float('nan')))
+            logger.info("Validation Split Size: %s", checkpoint.get('val_size', 'N/A'))
             
-            # Create and load model
+            # Architecture details
+            arch_type = classifier_config.get('architecture_type', 'standard')
+            logger.info("\nArchitecture Configuration:")
+            logger.info("Type: %s", arch_type)
+            logger.info("CLS Pooling: %s", classifier_config.get('cls_pooling', True))
+            logger.info("Learning Rate: %.6f", classifier_config.get('learning_rate', 0.0))
+            logger.info("Weight Decay: %.6f", classifier_config.get('weight_decay', 0.0))
+            
+            if arch_type == 'plane_resnet':
+                logger.info("\nPlaneResNet Configuration:")
+                logger.info("Number of Planes: %d", classifier_config.get('num_planes', 'N/A'))
+                logger.info("Plane Width: %d", classifier_config.get('plane_width', 'N/A'))
+                logger.info("Regularization: BatchNorm")
+                logger.info("Warmup Ratio: %.3f", classifier_config.get('warmup_ratio', 0.0))
+            else:
+                # Calculate actual layer sizes
+                bert_hidden_size = self.config.bert_model_name.config.hidden_size if hasattr(self.config.bert_model_name, 'config') else 768
+                layer_sizes = self._calculate_layer_sizes(
+                    bert_hidden_size,
+                    classifier_config.get('hidden_dim'),
+                    classifier_config.get('num_layers'),
+                    checkpoint.get('num_classes', self.config.num_classes)
+                )
+                hidden_layers = layer_sizes[1:-1]  # Exclude input and output layers
+
+                logger.info("\nStandard Classifier Configuration:")
+                logger.info("Number of Layers: %d", classifier_config.get('num_layers', 'N/A'))
+                logger.info("Hidden Layer Sizes: %s", hidden_layers)
+                logger.info("Activation: %s", classifier_config.get('activation', 'N/A'))
+                logger.info("Dropout Rate: %.4f", classifier_config.get('dropout_rate', 'N/A'))
+                logger.info("Warmup Ratio: %.3f", classifier_config.get('warmup_ratio', 0.0))
+
+            # Log hyperparameters if available
+            if 'hyperparameters' in checkpoint:
+                logger.info("\nTrial Hyperparameters:")
+                for key, value in checkpoint['hyperparameters'].items():
+                    logger.info("  %s: %s", key, value)
+
+            # Create and return model
             model = BERTClassifier(
                 self.config.bert_model_name,
-                num_classes,
+                checkpoint.get('num_classes', self.config.num_classes),
                 classifier_config
             )
-            model.load_state_dict(model_state)
+            model.load_state_dict(checkpoint['model_state_dict'])
             model.to(self.device)
             model.eval()
-            
-            # Enhanced logging of model architecture
-            logger.info("\nModel Architecture Details:")
-            logger.info("-" * 50)
-            logger.info(f"BERT Model: {self.config.bert_model_name}")
-            logger.info(f"Architecture Type: {classifier_config['architecture_type']}")
-            logger.info(f"Number of Classes: {num_classes}")
-            logger.info(f"CLS Pooling: {classifier_config['cls_pooling']}")
-            
-            if classifier_config['architecture_type'] == 'standard':
-                logger.info("\nStandard Classifier Configuration:")
-                logger.info(f"Number of Layers: {classifier_config['num_layers']}")
-                logger.info(f"Hidden Dimension: {classifier_config['hidden_dim']}")
-                logger.info(f"Activation: {classifier_config['activation']}")
-                logger.info(f"Regularization: {classifier_config['regularization']}")
-                if classifier_config['regularization'] == 'dropout':
-                    logger.info(f"Dropout Rate: {classifier_config['dropout_rate']}")
-                
-                # Log layer sizes
-                input_size = model.bert.config.hidden_size
-                logger.info("\nLayer Dimensions:")
-                logger.info(f"Input (BERT) -> {input_size}")
-                
-                # Calculate and log progression of layer sizes
-                current_size = input_size
-                if classifier_config['num_layers'] > 1:
-                    ratio = (classifier_config['hidden_dim'] / current_size) ** (1.0 / (classifier_config['num_layers'] - 1))
-                    for i in range(classifier_config['num_layers'] - 1):
-                        current_size = int(current_size * ratio)
-                        current_size = max(current_size, classifier_config['hidden_dim'])
-                        logger.info(f"Hidden Layer {i+1} -> {current_size}")
-                logger.info(f"Output Layer -> {num_classes}")
-                
-            else:  # plane_resnet
-                logger.info("\nPlaneResNet Configuration:")
-                logger.info(f"Number of Planes: {classifier_config['num_planes']}")
-                logger.info(f"Plane Width: {classifier_config['plane_width']}")
-                logger.info(f"Input Size: {model.bert.config.hidden_size}")
-                logger.info(f"Output Size: {num_classes}")
-            
-            logger.info("-" * 50)
             
             return model
             
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}") from e
+
+    def _calculate_layer_sizes(self, input_size: int, hidden_dim: int, num_layers: int, num_classes: int) -> List[int]:
+        """Calculate the actual sizes of all layers."""
+        if num_layers == 1:
+            return [input_size, num_classes]
+        
+        layer_sizes = [input_size]
+        current_size = input_size
+        
+        if num_layers > 2:
+            # Calculate intermediate sizes with geometric progression
+            ratio = (hidden_dim / current_size) ** (1.0 / (num_layers - 1))
+            for _ in range(num_layers - 1):
+                current_size = int(current_size * ratio)
+                current_size = max(current_size, hidden_dim)
+                layer_sizes.append(current_size)
+        else:
+            layer_sizes.append(hidden_dim)
+        
+        layer_sizes.append(num_classes)
+        return layer_sizes
     
     def evaluate(self, 
                 save_predictions: bool = True,
@@ -149,6 +160,14 @@ class ModelEvaluator:
             self.config, validation_mode=True
         )
         
+        # Add split size logging
+        logger.info("\nEvaluation Data Split:")
+        logger.info("Test set size: %d samples", len(test_texts))
+        logger.info("Label distribution:")
+        unique_labels, counts = np.unique(test_labels, return_counts=True)
+        for label, count in zip(label_encoder.inverse_transform(unique_labels), counts):
+            logger.info("  %s: %d samples (%.2f%%)", label, count, 100 * count/len(test_labels))
+        
         # Create test dataloader
         test_dataloader = create_dataloaders(
             test_texts,
@@ -163,7 +182,8 @@ class ModelEvaluator:
         all_labels = []
         all_probs = []
         
-        logger.info("Starting evaluation...")
+        logger.info("Starting evaluation (with dropout disabled)...")
+        self.model.eval()  # Ensure model is in evaluation mode
         with torch.no_grad():
             for batch in tqdm(test_dataloader, desc="Evaluating"):
                 # Move batch to device
@@ -228,18 +248,21 @@ class ModelEvaluator:
 
     @classmethod
     def from_config(cls, config: EvaluationConfig) -> 'ModelEvaluator':
-        """Create evaluator instance from configuration.
-        
-        Args:
-            config (EvaluationConfig): Evaluation configuration.
-            
-        Returns:
-            ModelEvaluator: Configured evaluator instance.
-        """
-        return cls(
-            model_path=config.best_model,
-            config=config
-        )
+        """Create evaluator instance from configuration."""
+        # List all potential model files
+        model_files = list(config.best_trials_dir.glob("best_model_*.pt"))
+        if model_files:
+            logger.info("\nFound model files:")
+            for f in model_files:
+                try:
+                    checkpoint = torch.load(f, map_location='cpu')
+                    logger.info("  %s (score: %.4f)", f.name, 
+                              checkpoint.get('metric_value', float('nan')))
+                except:
+                    logger.warning("  Failed to load %s", f.name)
+
+        logger.info("\nSelected model: %s", config.best_model)
+        return cls(model_path=config.best_model, config=config)
 
     @classmethod
     def add_model_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -287,8 +310,12 @@ def main():
     config.metrics = args.metrics
     
     try:
-        logger.info(f"Loading model from: {config.best_model}")
-        evaluator = ModelEvaluator.from_config(config)
+        logger.info(f"Loading model from: {args.best_model}")
+        # Create evaluator with explicit model path
+        evaluator = ModelEvaluator(
+            model_path=args.best_model,
+            config=config
+        )
         metrics, _ = evaluator.evaluate(
             save_predictions=True,
             output_dir=config.output_dir
