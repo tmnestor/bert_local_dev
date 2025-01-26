@@ -8,47 +8,29 @@ from typing import Dict, List, Optional, Any
 
 import optuna
 import torch
-from torch import optim
 from optuna._experimental import ExperimentalWarning
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
+from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
 from transformers import get_linear_schedule_with_warmup
-from sklearn.model_selection import train_test_split
 
 from ..config.config import ModelConfig
 from ..models.model import BERTClassifier
 from ..training.trainer import Trainer
 from ..utils.train_utils import (
     load_and_preprocess_data,
+    create_dataloaders,
     initialize_progress_bars,
-    log_separator,
-    create_dataloaders  # Move this function to train_utils
+    log_separator
 )
 from ..utils.logging_manager import setup_logger
+from ..config.defaults import OPTIM_SEARCH_SPACE
 
 # Silence specific Optuna warnings
 warnings.filterwarnings('ignore', category=ExperimentalWarning)
 
 logger = setup_logger(__name__)
-
-def create_optimizer(optimizer_name: str, model_params, **kwargs) -> optim.Optimizer:
-    """Create optimizer instance based on name and parameters."""
-    optimizers = {
-        'adamw': optim.AdamW,
-        'sgd': optim.SGD,
-        'rmsprop': optim.RMSprop,
-        'adagrad': optim.Adagrad
-    }
-    
-    if optimizer_name not in optimizers:
-        raise ValueError(f"Unsupported optimizer: {optimizer_name}")
-        
-    # Add momentum for SGD if not provided
-    if optimizer_name == 'sgd' and 'momentum' not in kwargs:
-        kwargs['momentum'] = 0.9
-        
-    return optimizers[optimizer_name](model_params, **kwargs)
 
 def _create_study(name: str, storage: Optional[str] = None, 
                 sampler_type: str = 'tpe', random_seed: Optional[int] = None) -> optuna.Study:
@@ -144,9 +126,6 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
     logger.info("  Max sequence length: %s", model_config.max_seq_len)  # Updated from max_length
     logger.info("  Metric: %s", model_config.metric)
     
-    logger.info("\nInitializing optimization...")
-    logger.info("\n")  # Add extra line break before progress bars
-    
     # Initialize progress bars using utility function
     trial_pbar, epoch_pbar = initialize_progress_bars(n_trials or model_config.n_trials, model_config.num_epochs)
     
@@ -200,42 +179,37 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
     model_config.best_trials_dir.mkdir(exist_ok=True, parents=True)
     final_model_path = model_config.best_trials_dir / f'best_model_{trial_study_name}.pt'
     
-    try:
-        # Debug logging
-        logger.info("Saving trial with performance:")
-        logger.info("Trial Score in best_model_info: %s", best_model_info.get(f'{model_config.metric}_score'))
-        logger.info("Model State Dict Size: %d", len(best_model_info['model_state']))
-        
-        metric_key = f'{model_config.metric}_score'
-        save_dict = {
-            'model_state_dict': best_model_info['model_state'],
-            'config': {
-                'classifier_config': best_model_info['config'],
-                'epoch': -1,
-            },
-            'metric_value': best_model_info[metric_key],  # Verify this value
-            'study_name': trial_study_name,
-            'trial_number': best_model_info['trial_number'],
-            'num_classes': model_config.num_classes,
-            'hyperparameters': best_model_info['params'],
-            'val_size': 0.2,  # Add validation split size
-            'metric': model_config.metric  # Add which metric was optimized
-        }
-        torch.save(save_dict, final_model_path)
-        logger.info("Best trial metric (%s): %s", metric_key, best_model_info[metric_key])
-        logger.info("Saved best model to %s", final_model_path)
-        logger.info("Best %s: %.4f", model_config.metric, best_model_info[metric_key])
-    except Exception as e:
-        logger.error(f"Failed to save best trial: {str(e)}")
-        raise IOError(f"Failed to save best trial: {str(e)}")
+    # Debug logging
+    logger.info("Saving trial with performance:")
+    logger.info("Trial Score in best_model_info: %s", best_model_info.get(f'{model_config.metric}_score'))
+    logger.info("Model State Dict Size: %d", len(best_model_info['model_state']))
+    
+    metric_key = f'{model_config.metric}_score'
+    save_dict = {
+        'model_state_dict': best_model_info['model_state'],
+        'config': {
+            'classifier_config': best_model_info['config'],
+            'epoch': -1,
+        },
+        'metric_value': best_model_info[metric_key],  # Verify this value
+        'study_name': trial_study_name,
+        'trial_number': best_model_info['trial_number'],
+        'num_classes': model_config.num_classes,
+        'hyperparameters': best_model_info['params'],
+        'val_size': 0.2,  # Add validation split size
+        'metric': model_config.metric  # Add which metric was optimized
+    }
+    torch.save(save_dict, final_model_path)
+    logger.info("Best trial metric (%s): %s", metric_key, best_model_info[metric_key])
+    logger.info("Saved best model to %s", final_model_path)
+    logger.info("Best %s: %.4f", model_config.metric, best_model_info[metric_key])
 
 # First save location: During optimization in the objective function
 def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
              best_model_info: Dict[str, Any], trial_pbar: Optional[tqdm] = None, 
              epoch_pbar: Optional[tqdm] = None) -> float:
     """Optimization objective function for a single trial."""
-    # Extended batch size options
-    batch_size = trial.suggest_categorical('batch_size', [16, 32, 64, 128, 256])
+    batch_size = trial.suggest_categorical('batch_size', OPTIM_SEARCH_SPACE['batch_size'])
     
     # Create new train/val split for each trial
     train_texts, val_texts, train_labels, val_labels = train_test_split(
@@ -244,57 +218,16 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
     
     # ... existing split logging code ...
     
-    # Enhanced classifier configuration
+    # Single classifier config definition with all parameters (removed cls_pooling)
     classifier_config = {
-        'num_layers': trial.suggest_int('num_layers', 1, 6),
-        'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256, 512, 1024, 2048]),
-        'activation': trial.suggest_categorical('activation', [
-            'relu', 'gelu', 'elu', 'leaky_relu', 'selu',
-            'mish', 'swish', 'hardswish', 'tanh', 'prelu'
-        ]),
-        'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.6),
-        'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True),
-        'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.3)
+        'num_layers': trial.suggest_int('num_layers', *OPTIM_SEARCH_SPACE['num_layers']),
+        'hidden_dim': trial.suggest_categorical('hidden_dim', OPTIM_SEARCH_SPACE['hidden_dim']),
+        'activation': trial.suggest_categorical('activation', OPTIM_SEARCH_SPACE['activation']),
+        'dropout_rate': trial.suggest_float('dropout_rate', *OPTIM_SEARCH_SPACE['dropout_rate']),
+        'learning_rate': trial.suggest_float('learning_rate', *OPTIM_SEARCH_SPACE['learning_rate'], log=True),
+        'weight_decay': trial.suggest_float('weight_decay', *OPTIM_SEARCH_SPACE['weight_decay'], log=True),
+        'warmup_ratio': trial.suggest_float('warmup_ratio', *OPTIM_SEARCH_SPACE['warmup_ratio'])
     }
-
-    # Add optimizer selection to hyperparameters
-    optimizer_name = trial.suggest_categorical('optimizer', ['adamw', 'sgd', 'rmsprop'])
-    
-    # Base optimizer parameters with correct naming
-    learning_rate = trial.suggest_float('learning_rate', 1e-6, 5e-3, log=True)
-    optimizer_config = {
-        'lr': learning_rate,  # Use 'lr' for PyTorch optimizers
-        'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True)
-    }
-    
-    # Update classifier config with learning rate
-    classifier_config['learning_rate'] = learning_rate
-    
-    # Optimizer-specific parameters
-    if optimizer_name == 'sgd':
-        optimizer_config.update({
-            'momentum': trial.suggest_float('momentum', 0.0, 0.99),
-            'nesterov': trial.suggest_categorical('nesterov', [True, False])
-        })
-    elif optimizer_name == 'adamw':
-        optimizer_config.update({
-            'betas': (
-                trial.suggest_float('beta1', 0.5, 0.9999),
-                trial.suggest_float('beta2', 0.9, 0.9999)
-            ),
-            'eps': trial.suggest_float('eps', 1e-8, 1e-6, log=True)
-        })
-    elif optimizer_name == 'rmsprop':
-        optimizer_config.update({
-            'momentum': trial.suggest_float('momentum', 0.0, 0.99),
-            'alpha': trial.suggest_float('alpha', 0.8, 0.99)
-        })
-        
-    # Update classifier config with optimizer settings
-    classifier_config.update({
-        'optimizer': optimizer_name,
-        'optimizer_config': optimizer_config.copy()  # Make a copy to avoid reference issues
-    })
 
     train_dataloader, val_dataloader = create_dataloaders(
         [train_texts, val_texts],
@@ -307,37 +240,11 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
     model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, classifier_config)
     trainer = Trainer(model, model_config)
     
-    # Create optimizer using factory with all parameters in optimizer_config
-    optimizer = create_optimizer(
-        optimizer_name,
-        model.parameters(),
-        **optimizer_config  # Remove lr=optimizer_config['lr'] and weight_decay=optimizer_config['weight_decay']
-    )
-    
-    # Setup scheduler
-    total_steps = len(train_dataloader) * model_config.num_epochs
-    warmup_steps = int(total_steps * classifier_config['warmup_ratio'])
-    scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
-    
-    # Training loop
-    trial_best_score = 0.0
-    trial_best_state = None
-    patience = max(5, min(10, trial.number // 3))
-    min_epochs = max(3, model_config.num_epochs // 4)
-    
-    for epoch in range(model_config.num_epochs):
-        if epoch_pbar:
-            epoch_pbar.set_description(f"Trial {trial.number} Epoch {epoch+1}")
-            
-        trainer.train_epoch(train_dataloader, optimizer, scheduler)
-    model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, classifier_config)
-    trainer = Trainer(model, model_config)
-    
     # Setup training
-    optimizer = create_optimizer(
-        optimizer_name,
+    optimizer = torch.optim.AdamW(
         model.parameters(),
-        **optimizer_config  # Remove lr=optimizer_config['lr'] and weight_decay=optimizer_config['weight_decay']
+        lr=classifier_config['learning_rate'],
+        weight_decay=classifier_config['weight_decay']
     )
     
     total_steps = len(train_dataloader) * model_config.num_epochs
@@ -347,8 +254,8 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
     # Training loop
     trial_best_score = 0.0
     trial_best_state = None
-    patience = max(5, min(10, trial.number // 3))
-    min_epochs = max(3, model_config.num_epochs // 4)
+    patience = max(5, trial.number // 5)
+    no_improve_count = 0
     
     for epoch in range(model_config.num_epochs):
         if epoch_pbar:
@@ -381,7 +288,7 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
         else:
             no_improve_count += 1
             
-        if epoch >= min_epochs and (trial.should_prune() or no_improve_count >= patience):
+        if epoch >= min(5, model_config.num_epochs // 2) and (trial.should_prune() or no_improve_count >= patience):
             raise optuna.TrialPruned()
     
     if trial_pbar:
@@ -437,7 +344,7 @@ def load_best_configuration(best_trials_dir: Path, exp_name: str = None) -> dict
     best_value = float('-inf')
     
     for file in trial_files:
-        trial_data = torch.load(file, map_location='cpu', weights_only=False)
+        trial_data = torch.load(file, weights_only=True)
         if trial_data['value'] > best_value:
             best_value = trial_data['value']
             best_trial = trial_data
@@ -493,4 +400,5 @@ if __name__ == "__main__":
         logger.info("\nAll experiments completed successfully")
     except Exception as e:
         logger.error("Error during optimization: %s", str(e), exc_info=True)
+        raise
         raise

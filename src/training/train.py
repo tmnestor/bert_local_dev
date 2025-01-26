@@ -16,6 +16,8 @@ from ..utils.train_utils import (
     save_model_state
 )
 from ..utils.logging_manager import setup_logger
+from ..config.defaults import CLASSIFIER_DEFAULTS
+from ..tuning.optimize import create_optimizer  # Update this import
 
 logger = setup_logger(__name__)
 
@@ -81,7 +83,12 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> Op
 def train_model(model_config: ModelConfig, clf_config: dict = None):
     """Train a model with fixed or optimized configuration"""
     if clf_config is None:
-        clf_config = load_best_configuration(model_config.best_trials_dir)
+        # Use default configuration
+        clf_config = CLASSIFIER_DEFAULTS['standard'].copy()
+        clf_config.update({
+            'learning_rate': model_config.learning_rate,
+            'batch_size': model_config.batch_size
+        })
         
     if clf_config is None:
         logger.info("Using default configuration")
@@ -115,11 +122,17 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
     model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, clf_config)
     trainer = Trainer(model, model_config)
     
-    # Setup optimizer and scheduler
-    optimizer = torch.optim.AdamW(
+    # Use optimizer factory if optimizer is specified in config
+    optimizer_name = clf_config.get('optimizer', 'adamw')
+    optimizer_config = clf_config.get('optimizer_config', {
+        'learning_rate': clf_config.get('learning_rate', model_config.learning_rate),
+        'weight_decay': clf_config.get('weight_decay', 0.01)
+    })
+    
+    optimizer = create_optimizer(
+        optimizer_name,
         model.parameters(),
-        lr=clf_config.get('learning_rate', model_config.learning_rate),
-        weight_decay=clf_config.get('weight_decay', 0.01)
+        **optimizer_config
     )
     
     total_steps = len(train_dataloader) * model_config.num_epochs

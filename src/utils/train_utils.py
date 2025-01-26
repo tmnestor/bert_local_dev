@@ -133,15 +133,9 @@ def create_dataloaders(
     )
 
 def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
-    """Initialize progress bars for training/tuning.
-
-    Args:
-        n_trials: Number of optimization trials.
-        num_epochs: Number of epochs per trial.
-
-    Returns:
-        Tuple of (trial_progress_bar, epoch_progress_bar).
-    """
+    """Initialize progress bars for training/tuning."""
+    # Add line break before progress bars
+    print("\n", flush=True)  # Force line break and flush output
     trial_pbar = tqdm(total=n_trials, desc='Trials', position=0)
     epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=False)
     return trial_pbar, epoch_pbar

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Union
 import torch
 
 from .base_config import BaseConfig
+from .defaults import MODEL_DEFAULTS, CLASSIFIER_DEFAULTS
 
 # Add logger at module level
 logger = logging.getLogger(__name__)
@@ -17,11 +18,11 @@ VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
 class ModelConfig(BaseConfig):
     bert_model_name: str = './bert_encoder'  # Update default value
     num_classes: Optional[int] = None  # Changed from fixed 5 to Optional[int]
-    max_seq_len: int = 512  # Changed from max_length
-    batch_size: int = 16
+    max_seq_len: int = MODEL_DEFAULTS['max_seq_len']
+    batch_size: int = CLASSIFIER_DEFAULTS['standard']['batch_size']
     num_epochs: int = 10  # Number of epochs
-    learning_rate: float = 2e-5
-    device: str = "cpu"
+    learning_rate: float = CLASSIFIER_DEFAULTS['standard']['learning_rate']
+    device: str = MODEL_DEFAULTS['device']
     data_file: Path = Path("data/bbc-text.csv")
     best_trials_dir: Path = Path("best_trials")  # Base directory
     model_save_path: Path = Path("best_trials/bert_classifier.pth")  # Final model path
