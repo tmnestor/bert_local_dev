@@ -85,10 +85,11 @@ def _create_study(name: str, storage: Optional[str] = None,
         )
     }.get(sampler_type, TPESampler(seed=random_seed))
 
+    # Adjust pruner to be less aggressive
     pruner = HyperbandPruner(
-        min_resource=1,
-        max_resource=10,
-        reduction_factor=3
+        min_resource=3,  # Increased from 1
+        max_resource=15,  # Increased from 10
+        reduction_factor=2  # Decreased from 3
     )
 
     return optuna.create_study(
@@ -149,6 +150,9 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
     
     # Initialize progress bars using utility function
     trial_pbar, epoch_pbar = initialize_progress_bars(n_trials or model_config.n_trials, model_config.num_epochs)
+    
+    # Force line break before starting trials
+    logger.info("\n")  # Add extra line break before trials start
     
     # Create study (fix the reference)
     study = _create_study(experiment_name, storage, model_config.sampler, random_seed)
@@ -230,21 +234,27 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
         raise IOError(f"Failed to save best trial: {str(e)}")
 
 # First save location: During optimization in the objective function
-def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
-             best_model_info: Dict[str, Any], trial_pbar: Optional[tqdm] = None, 
-             epoch_pbar: Optional[tqdm] = None) -> float:
-    """Optimization objective function for a single trial."""
-    # Extended batch size options
-    batch_size = trial.suggest_categorical('batch_size', [16, 32, 64, 128, 256])
+def setup_training_components(model_config, classifier_config, optimizer_name, optimizer_config, train_dataloader):
+    """Set up model, trainer, optimizer and scheduler."""
+    model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, classifier_config)
+    trainer = Trainer(model, model_config)
     
-    # Create new train/val split for each trial
-    train_texts, val_texts, train_labels, val_labels = train_test_split(
-        texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
+    optimizer = create_optimizer(
+        optimizer_name,
+        model.parameters(),
+        **optimizer_config
     )
     
-    # ... existing split logging code ...
+    total_steps = len(train_dataloader) * model_config.num_epochs
+    warmup_steps = int(total_steps * classifier_config['warmup_ratio'])
+    scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
     
-    # Enhanced classifier configuration
+    return model, trainer, optimizer, scheduler
+
+def get_trial_config(trial):
+    """Get trial configuration parameters."""
+    batch_size = trial.suggest_categorical('batch_size', [16, 32, 64, 128, 256])
+    
     classifier_config = {
         'num_layers': trial.suggest_int('num_layers', 1, 6),
         'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256, 512, 1024, 2048]),
@@ -256,21 +266,26 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True),
         'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.3)
     }
-
-    # Add optimizer selection to hyperparameters
-    optimizer_name = trial.suggest_categorical('optimizer', ['adamw', 'sgd', 'rmsprop'])
     
-    # Base optimizer parameters with correct naming
+    optimizer_name = trial.suggest_categorical('optimizer', ['adamw', 'sgd', 'rmsprop'])
     learning_rate = trial.suggest_float('learning_rate', 1e-6, 5e-3, log=True)
+    
+    optimizer_config = get_optimizer_config(trial, optimizer_name, learning_rate)
+    classifier_config.update({
+        'learning_rate': learning_rate,
+        'optimizer': optimizer_name,
+        'optimizer_config': optimizer_config.copy()
+    })
+    
+    return batch_size, classifier_config, optimizer_name, optimizer_config
+
+def get_optimizer_config(trial, optimizer_name, learning_rate):
+    """Get optimizer-specific configuration."""
     optimizer_config = {
-        'lr': learning_rate,  # Use 'lr' for PyTorch optimizers
+        'lr': learning_rate,
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True)
     }
     
-    # Update classifier config with learning rate
-    classifier_config['learning_rate'] = learning_rate
-    
-    # Optimizer-specific parameters
     if optimizer_name == 'sgd':
         optimizer_config.update({
             'momentum': trial.suggest_float('momentum', 0.0, 0.99),
@@ -289,105 +304,122 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
             'momentum': trial.suggest_float('momentum', 0.0, 0.99),
             'alpha': trial.suggest_float('alpha', 0.8, 0.99)
         })
-        
-    # Update classifier config with optimizer settings
-    classifier_config.update({
-        'optimizer': optimizer_name,
-        'optimizer_config': optimizer_config.copy()  # Make a copy to avoid reference issues
-    })
+    
+    return optimizer_config
 
-    train_dataloader, val_dataloader = create_dataloaders(
-        [train_texts, val_texts],
-        [train_labels, val_labels],
-        model_config,
-        batch_size
-    )
-    
-    # Create model and trainer
-    model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, classifier_config)
-    trainer = Trainer(model, model_config)
-    
-    # Create optimizer using factory with all parameters in optimizer_config
-    optimizer = create_optimizer(
-        optimizer_name,
-        model.parameters(),
-        **optimizer_config  # Remove lr=optimizer_config['lr'] and weight_decay=optimizer_config['weight_decay']
-    )
-    
-    # Setup scheduler
-    total_steps = len(train_dataloader) * model_config.num_epochs
-    warmup_steps = int(total_steps * classifier_config['warmup_ratio'])
-    scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
-    
-    # Training loop
-    trial_best_score = 0.0
-    trial_best_state = None
-    patience = max(5, min(10, trial.number // 3))
-    min_epochs = max(3, model_config.num_epochs // 4)
-    
-    for epoch in range(model_config.num_epochs):
-        if epoch_pbar:
-            epoch_pbar.set_description(f"Trial {trial.number} Epoch {epoch+1}")
-            
-        trainer.train_epoch(train_dataloader, optimizer, scheduler)
-    model = BERTClassifier(model_config.bert_model_name, model_config.num_classes, classifier_config)
-    trainer = Trainer(model, model_config)
-    
-    # Setup training
-    optimizer = create_optimizer(
-        optimizer_name,
-        model.parameters(),
-        **optimizer_config  # Remove lr=optimizer_config['lr'] and weight_decay=optimizer_config['weight_decay']
-    )
-    
-    total_steps = len(train_dataloader) * model_config.num_epochs
-    warmup_steps = int(total_steps * classifier_config['warmup_ratio'])
-    scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
-    
-    # Training loop
-    trial_best_score = 0.0
-    trial_best_state = None
-    patience = max(5, min(10, trial.number // 3))
-    min_epochs = max(3, model_config.num_epochs // 4)
-    
-    for epoch in range(model_config.num_epochs):
-        if epoch_pbar:
-            epoch_pbar.set_description(f"Trial {trial.number} Epoch {epoch+1}")
-            
-        trainer.train_epoch(train_dataloader, optimizer, scheduler)
-        score, _ = trainer.evaluate(val_dataloader)
+def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
+             best_model_info: Dict[str, Any], trial_pbar: Optional[tqdm] = None, 
+             epoch_pbar: Optional[tqdm] = None) -> float:
+    """Optimization objective function for a single trial."""
+    try:
+        # Get trial configuration
+        batch_size, classifier_config, optimizer_name, optimizer_config = get_trial_config(trial)
         
-        if epoch_pbar:
-            epoch_pbar.update(1)
-            
-        trial.report(score, epoch)
+        # Create train/val split
+        train_texts, val_texts, train_labels, val_labels = train_test_split(
+            texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
+        )
         
-        if score > trial_best_score:
-            no_improve_count = 0
-            trial_best_score = score
-            trial_best_state = {
-                'model_state': {k: v.cpu().clone() for k, v in model.state_dict().items()},
-                'config': classifier_config.copy(),
-                f'{model_config.metric}_score': trial_best_score,
-                'trial_number': trial.number,
-                'params': trial.params.copy(),
-                'epoch': epoch  # Add epoch information
-            }
-            # Update global best if better
-            if trial_best_score > best_model_info['score']:
-                best_model_info['score'] = trial_best_score
-                best_model_info['model_info'] = trial_best_state
-                logger.info("New best model found in trial %d with score: %.4f", trial.number, trial_best_score)
-        else:
-            no_improve_count += 1
-            
-        if epoch >= min_epochs and (trial.should_prune() or no_improve_count >= patience):
-            raise optuna.TrialPruned()
-    
-    if trial_pbar:
-        trial_pbar.update(1)
+        # Create dataloaders
+        train_dataloader, val_dataloader = create_dataloaders(
+            [train_texts, val_texts],
+            [train_labels, val_labels],
+            model_config,
+            batch_size
+        )
         
-    return trial_best_score
+        # Setup training components
+        model, trainer, optimizer, scheduler = setup_training_components(
+            model_config, classifier_config, optimizer_name, optimizer_config, train_dataloader
+        )
+        
+        # Training loop
+        trial_best_score = 0.0
+        trial_best_state = None
+        # Adjust early stopping parameters
+        patience = max(3, min(8, trial.number // 2))  # Reduced patience
+        min_epochs = max(5, model_config.num_epochs // 3)  # Increased minimum epochs
+        no_improve_count = 0
+        last_score = float('-inf')
+        
+        for epoch in range(model_config.num_epochs):
+            try:
+                if epoch_pbar:
+                    # Update description without newline
+                    epoch_pbar.set_description(f"Trial {trial.number} Epoch {epoch+1}")
+                    epoch_pbar.refresh()  # Force refresh of display
+                
+                trainer.train_epoch(train_dataloader, optimizer, scheduler)
+                score, metrics = trainer.evaluate(val_dataloader)
+                
+                if epoch_pbar:
+                    epoch_pbar.update(1)
+                
+                # Report to Optuna without logging
+                trial.report(score, epoch)
+                
+                # Check for significant regression
+                if epoch >= min_epochs and score < last_score * 0.8:
+                    logger.warning(f"Trial {trial.number} showing significant performance regression")
+                    raise optuna.TrialPruned(f"Performance dropped by more than 20% (from {last_score:.4f} to {score:.4f})")
+                
+                if score > trial_best_score:
+                    no_improve_count = 0
+                    trial_best_score = score
+                    last_score = score
+                    trial_best_state = {
+                        'model_state': {k: v.cpu().clone() for k, v in model.state_dict().items()},
+                        'config': classifier_config.copy(),
+                        f'{model_config.metric}_score': trial_best_score,
+                        'trial_number': trial.number,
+                        'params': trial.params.copy(),
+                        'epoch': epoch,
+                        'metrics': metrics
+                    }
+                    
+                    if trial_best_score > best_model_info['score']:
+                        best_model_info['score'] = trial_best_score
+                        best_model_info['model_info'] = trial_best_state
+                        # Log new best model on new line
+                        logger.info("\nNew best model found in trial %d with score: %.4f (epoch %d)", 
+                                  trial.number, trial_best_score, epoch)
+                else:
+                    no_improve_count += 1
+                
+                # Handle pruning
+                should_prune = False
+                if epoch >= min_epochs:
+                    if trial.should_prune():
+                        should_prune = True
+                        reason = "Optuna pruning triggered"
+                    elif no_improve_count >= patience:
+                        should_prune = True
+                        reason = f"No improvement for {patience} epochs"
+                    
+                if should_prune:
+                    logger.info(f"\nPruning trial {trial.number} at epoch {epoch}: {reason}")
+                    logger.info(f"Final trial score: {trial_best_score:.4f}")
+                    raise optuna.TrialPruned(reason)
+                    
+            except optuna.TrialPruned as e:
+                logger.info(f"\nTrial {trial.number} pruned at epoch {epoch}: {str(e)}")
+                raise
+            except Exception as e:
+                logger.error(f"\nError in epoch {epoch}: {str(e)}", exc_info=True)
+                raise
+        
+        if trial_pbar:
+            trial_pbar.update(1)
+            
+        return trial_best_score
+        
+    except optuna.TrialPruned as e:
+        if trial_best_score > 0:
+            return trial_best_score
+        raise
+    except Exception as e:
+        logger.error(f"\nTrial {trial.number} failed: {str(e)}", exc_info=True)
+        raise
 
 def save_trial_callback(trial_study_name: str, model_config: ModelConfig, best_model_info: Dict[str, Any]):
     """Create a callback for saving trial information.
