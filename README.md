@@ -1,238 +1,147 @@
 # BERT Text Classification Framework
 
-A production-ready framework for BERT-based text classification with automated optimization, comprehensive evaluation, and flexible architectures.
+A production-grade framework for fine-tuning BERT models on text classification tasks, featuring automated optimization and comprehensive evaluation.
 
-## Features
+## Purpose
 
-### Core Capabilities
-- 🚀 Two optimized classifier architectures (Standard and PlaneResNet)
-- 📊 Automated hyperparameter optimization with Optuna
-- 📈 Comprehensive evaluation metrics and reporting
-- 🔄 Robust data management and validation
-- 📝 Structured logging and error handling
+This framework addresses three key challenges in BERT-based text classification:
 
-### Architecture Support
-- **Standard Classifier**: Configurable deep neural network
-- **PlaneResNet**: Innovative parallel residual architecture
-- **BERT Integration**: Efficient handling of BERT embeddings
-- **Flexible Pooling**: CLS token or mean pooling strategies
+1. **Optimization Complexity** - Automated hyperparameter tuning using Optuna
+2. **Evaluation Rigor** - Comprehensive metrics and analysis tools
+3. **Architecture Flexibility** - Support for both standard and innovative classifier architectures
 
-### Data Management
-- Automated train/val/test splitting (60/20/20)
-- Data leakage prevention
-- Persistent storage of splits
-- Label encoding and validation
+## Structure
 
-## Installation
+```
+src/
+├── config/          # Configuration management 
+├── models/          # Model architectures
+├── training/        # Training pipeline
+├── tuning/         # Hyperparameter optimization 
+├── evaluation/     # Evaluation tools
+├── data_utils/     # Data handling utilities
+└── utils/          # Common utilities
+```
 
+Key Components:
+- **data_utils/**: Dataset management and validation
+- **models/**: BERT classifier implementations
+- **tuning/**: Optuna-based optimization
+- **evaluation/**: Metrics and analysis tools
+
+## Quick Usage
+
+### 1. Setup
 ```bash
-# Create new environment
+# Create environment
 conda env create -f nlp_env.yml
 
-# Update existing environment
-conda env update -f nlp_env.yml --prune
+# Prepare BERT model
+python scripts/download_BERT.py
 ```
 
-## Project Structure
-
-```
-bert_local_dev/
-├── src/
-│   ├── config/
-│   │   ├── __init__.py
-│   │   ├── base_config.py      # Base configuration class
-│   │   └── config.py           # Model and evaluation configs
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── model.py            # BERT classifier architectures
-│   ├── training/
-│   │   ├── __init__.py
-│   │   ├── train.py           # Training script
-│   │   ├── trainer.py         # Training logic
-│   │   ├── dataset.py         # Dataset classes
-│   │   └── validate.py        # Validation script
-│   ├── tuning/
-│   │   ├── __init__.py
-│   │   └── optimize.py        # Hyperparameter optimization
-│   ├── evaluation/
-│   │   ├── __init__.py
-│   │   └── evaluator.py       # Model evaluation
-│   └── utils/
-│       ├── __init__.py
-│       ├── data_splitter.py   # Data management
-│       ├── logging_manager.py # Logging setup
-│       ├── metrics.py         # Evaluation metrics
-│       └── train_utils.py     # Training utilities
-├── logs/                      # Training logs
-├── best_trials/               # Saved models
-├── data/                      # Dataset storage
-├── evaluation_results/        # Evaluation outputs
-├── nlp_env.yml                # Environment specification
-├── README.md                  # Project documentation
-└── LICENSE                    # License file
-```
-
-### Key Components
-
-- **src/config/**: Configuration management and validation
-- **src/models/**: Model architectures and implementations
-- **src/training/**: Training pipeline and utilities
-- **src/tuning/**: Hyperparameter optimization framework
-- **src/evaluation/**: Evaluation tools and metrics
-- **src/utils/**: Common utilities and helpers
-
-Refer to the data utilities in `src/data_utils` instead of `src/data`.
-
-## Quick Start
-
-### 1. Basic Training
+### 2. Train
 ```bash
 python -m src.training.train \
-    --max_seq_len 64 \
-    --data_file "data/bbc-text.csv" \
+    --data_file "data/your_data.csv" \
     --bert_model_name "./bert_encoder" \
-    --architecture "standard" #bypass previous models and train a new one
+    --batch_size 32
 ```
 
-### 2. Hyperparameter Optimization
+### 3. Optimize
 ```bash
 python -m src.tuning.optimize \
-    --max_seq_len 64 \
-    --data_file "data/bbc-text.csv" \
-    --n_trials 3 \
-    --study_name "bert_opt" \
-    --metric f1
-
-# python -m src.tuning.optimize --max_seq_len 64 --data_file "data/bbc-text.csv" --n_trials 3 --study_name "bert_opt" --metric f1
+    --data_file "data/your_data.csv" \
+    --n_trials 50 \
+    --study_name "bert_opt"
 ```
 
-### 3. Model Evaluation
+### 4. Evaluate
 ```bash
 python -m src.evaluation.evaluator \
-    --best_model "best_trials/bert_classifier.pth" \
+    --best_model "best_trials/best_model.pt" \
     --output_dir "evaluation_results"
-
-# python -m src.evaluation.evaluator \
-#     --best_model "best_trials/best_model_weights.pth"
-```
-
-## Architecture Details
-
-### Standard Classifier
-- Configurable number of layers
-- Progressive dimension reduction
-- Multiple activation functions
-- Flexible regularization options
-
-```python
-config = {
-    'architecture_type': 'standard',
-    'num_layers': 2,
-    'hidden_dim': 256,
-    'activation': 'gelu',
-    'regularization': 'dropout',
-    'dropout_rate': 0.1
-}
-```
-
-### PlaneResNet
-- Parallel residual blocks
-- Efficient feature processing
-- Skip connections
-- Batch normalization
-
-```python
-config = {
-    'architecture_type': 'plane_resnet',
-    'num_planes': 8,
-    'plane_width': 128,
-    'cls_pooling': True
-}
 ```
 
 ## Data Format
 
-Required CSV format:
+Required CSV structure:
+```csv
+text,category
+"Sample text 1","class_a"
+"Sample text 2","class_b"
 ```
-<userPrompt>
-Rewrite the code in the current editor to incorporate the suggested code change.
-</userPrompt>
 
 Requirements:
 - UTF-8 encoding
-- Headers: "text" and "category" (exact names)
 - No missing values
-- Proper CSV escaping for quotes/commas
+- Headers: "text", "category"
 
 ## Configuration
 
-### Model Configuration
+### Model Settings
 ```python
-config = ModelConfig(
-    bert_model_name="bert-base-uncased",
-    num_classes=3,
-    batch_size=32,
-    learning_rate=2e-5,
-    num_epochs=10
-)
+config = {
+    'architecture_type': 'standard',  # or 'plane_resnet'
+    'num_layers': 2,
+    'hidden_dim': 256,
+    'dropout_rate': 0.1
+}
 ```
 
-### Evaluation Configuration
+### Optimization Space
 ```python
-config = EvaluationConfig(
-    metrics=["accuracy", "f1", "precision", "recall"],
-    output_dir="evaluation_results",
-    batch_size=64
-)
+search_space = {
+    'learning_rate': (1e-5, 1e-3),
+    'batch_size': [16, 32, 64],
+    'num_layers': (1, 4),
+    'hidden_dim': [128, 256, 512]
+}
 ```
 
 ## Best Practices
 
-### Training
-1. Start with standard architecture for baseline
-2. Use optimization for complex datasets
-3. Monitor validation metrics
-4. Enable early stopping
+1. Data Preparation
+   - Clean and validate inputs
+   - Use stratified splits
+   - Check class balance
 
-### Optimization
-1. Set appropriate trial budget
-2. Use TPE sampler for efficiency
-3. Define reasonable parameter ranges
-4. Save best configurations
+2. Training
+   - Start with standard architecture
+   - Enable early stopping
+   - Monitor validation metrics
 
-### Evaluation
-1. Use held-out test set
-2. Consider multiple metrics
-3. Analyze confusion matrix
-4. Check confidence scores
+3. Optimization
+   - Set reasonable trial budget
+   - Define informed parameter ranges
+   - Use TPE sampler
+
+4. Evaluation
+   - Check multiple metrics
+   - Analyze error patterns
+   - Save predictions for analysis
 
 ## Troubleshooting
 
-Common issues and solutions:
+1. Memory Issues:
+   ```python
+   config.batch_size = 16  # Reduce batch size
+   config.max_seq_len = 128  # Limit sequence length
+   ```
 
-1. **Memory Issues**
-   - Reduce batch size
-   - Use gradient accumulation
-   - Switch to CPU if needed
-
-2. **Poor Performance**
-   - Check learning rate
-   - Increase training epochs
-   - Verify data quality
-   - Try different architecture
-
-3. **Data Issues**
-   - Verify CSV format
-   - Check encoding
-   - Validate label consistency
+2. Performance Issues:
+   ```python
+   config.learning_rate = 2e-5  # Adjust learning rate
+   config.num_epochs = 10  # Increase epochs
+   ```
 
 ## Contributing
 
-1. Fork the repository
+1. Fork repository
 2. Create feature branch
 3. Add tests
 4. Submit pull request
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License - See LICENSE file
