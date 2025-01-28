@@ -1,5 +1,5 @@
 import json
-import pickle
+import joblib  # Replace pickle with joblib
 from pathlib import Path
 from typing import List, Optional
 from dataclasses import dataclass
@@ -130,7 +130,7 @@ class DataSplitter:
             (self.splits_dir / "train.csv").exists(),
             (self.splits_dir / "val.csv").exists(),
             (self.splits_dir / "test.csv").exists(),
-            (self.splits_dir / "label_encoder.pkl").exists()
+            (self.splits_dir / "label_encoder.joblib").exists()  # Update filename
         ))
     
     def _save_splits(self, splits: DataSplit) -> None:
@@ -147,9 +147,8 @@ class DataSplitter:
             })
             df.to_csv(self.splits_dir / f"{name}.csv", index=False)
         
-        # Save label encoder
-        with open(self.splits_dir / "label_encoder.pkl", 'wb') as f:
-            pickle.dump(splits.label_encoder, f)
+        # Save label encoder using joblib instead of pickle
+        joblib.dump(splits.label_encoder, self.splits_dir / "label_encoder.joblib")
             
         # Save metadata
         metadata = {
@@ -170,7 +169,7 @@ class DataSplitter:
             'train.csv': False,
             'val.csv': False,
             'test.csv': False,
-            'label_encoder.pkl': False,
+            'label_encoder.joblib': False,  # Update filename
             'metadata.json': False
         }
         
@@ -193,13 +192,12 @@ class DataSplitter:
         if not self._validate_split_files():
             raise FileNotFoundError(
                 "One or more split files missing. Required files: "
-                "train.csv, val.csv, test.csv, label_encoder.pkl, metadata.json"
+                "train.csv, val.csv, test.csv, label_encoder.joblib, metadata.json"  # Update filename
             )
         
         try:
-            # Load label encoder
-            with open(self.splits_dir / "label_encoder.pkl", 'rb') as f:
-                self.label_encoder = pickle.load(f)
+            # Load label encoder using joblib
+            self.label_encoder = joblib.load(self.splits_dir / "label_encoder.joblib")
             
             # Load splits
             splits = {}
