@@ -2,150 +2,118 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 
-import numpy as np
 import torch
-from torch import nn
+import pickle
 
 logger = logging.getLogger(__name__)
 
-def safe_load_checkpoint(
-    checkpoint_path: Path,
-    device: Union[str, torch.device],
-    expected_keys: Optional[set] = None,
-    strict: bool = True,
-    weights_only: bool = True
-) -> Dict[str, Any]:
-    """Safely load a model checkpoint with validation.
-    
-    Args:
-        checkpoint_path: Path to checkpoint file
-        device: Device to load the model onto
-        expected_keys: Set of required keys in checkpoint
-        strict: Whether to enforce expected keys
-        weights_only: Whether to load only weights (safer)
-        
-    Returns:
-        Dictionary containing checkpoint data
-        
-    Raises:
-        ValueError: If checkpoint validation fails
-        FileNotFoundError: If checkpoint file doesn't exist
-    """
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-    def _try_load_with_weights_only():
-        # Handle numpy types first
-        torch.serialization.add_classes_to_whitelist([
-            ('numpy', 'dtype'),
-            ('numpy', 'ndarray'),
-            ('numpy.core.multiarray', 'scalar'),
-            ('numpy', 'bool_'),
-            ('numpy', 'float32'),
-            ('numpy', 'float64'),
-            ('numpy', 'int64'),
-            ('numpy', 'int32')
-        ])
-        # Add numpy functions
-        torch.serialization.add_classes_to_whitelist([
-            ('numpy.core.multiarray', '_reconstruct')
-        ])
-        return torch.load(
-            checkpoint_path,
-            map_location=device,
-            weights_only=True,
-            mmap=True
-        )
-
-    def _try_load_without_weights_only():
-        return torch.load(
-            checkpoint_path,
-            map_location=device,
-            weights_only=False
-        )
-
+def add_safe_globals():
+    """Add necessary globals to PyTorch's safe list."""
     try:
-        # First attempt: with weights_only=True
-        if weights_only:
-            try:
-                checkpoint = _try_load_with_weights_only()
-                logger.info("Successfully loaded checkpoint with weights_only=True")
-            except Exception as e:
-                logger.warning(f"Failed to load with weights_only=True: {e}")
-                logger.info("Falling back to weights_only=False...")
-                checkpoint = _try_load_without_weights_only()
-                logger.info("Successfully loaded checkpoint with weights_only=False")
-        else:
-            checkpoint = _try_load_without_weights_only()
-            
+        import numpy as np
+        from torch.serialization import add_classes_to_whitelist
+        safe_classes = [
+            np.core.multiarray.scalar,
+            np.ndarray,
+            np.dtype,
+            np._globals._NoValue,
+        ]
+        for cls in safe_classes:
+            add_classes_to_whitelist([cls])
+    except (ImportError, AttributeError):
+        # Older PyTorch versions or if add_classes_to_whitelist isn't available
+        pass
+
+def safe_load_checkpoint(
+    path: Path,
+    device: str = 'cpu',
+    weights_only: bool = False,
+    strict: bool = True
+) -> Dict[str, Any]:
+    """Safely load model checkpoint with error handling.
+
+    Args:
+        path: Path to checkpoint file
+        device: Device to load model to
+        weights_only: If True, only loads weights (no optimizer etc.)
+        strict: Whether to strictly enforce that the keys match
+
+    Returns:
+        dict: Loaded checkpoint data
+
+    Raises:
+        RuntimeError: If loading fails
+    """
+    try:
+        # Ensure path exists
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+        # Load with progressive fallback strategy
+        try:
+            # First try loading with just map_location
+            checkpoint = torch.load(
+                path,
+                map_location=device
+            )
+        except RuntimeError as e:
+            if "Weights only load failed" in str(e):
+                logger.warning("Standard loading failed, attempting with pickle...")
+                # Try loading with pickle directly
+                with open(path, 'rb') as f:
+                    checkpoint = pickle.load(f)
+            else:
+                raise
+
+        if not isinstance(checkpoint, dict):
+            raise TypeError(f"Expected checkpoint to be dict, got {type(checkpoint)}")
+
+        required_keys = ['model_state_dict', 'config']
+        if strict and not all(k in checkpoint for k in required_keys):
+            raise KeyError(f"Checkpoint missing required keys: {required_keys}")
+
+        logger.info(f"Successfully loaded checkpoint from {path}")
+        return checkpoint
+
     except Exception as e:
-        logger.error(f"Failed to load checkpoint: {e}")
-        raise ValueError(f"Checkpoint loading failed: {e}")
+        raise RuntimeError(f"Failed to load checkpoint {path}: {str(e)}") from e
 
-    # Validate checkpoint structure
-    if not isinstance(checkpoint, dict):
-        raise ValueError("Checkpoint must be a dictionary")
+def verify_state_dict(state_dict: Dict[str, torch.Tensor], model: torch.nn.Module) -> None:
+    """Verify model state dict compatibility.
 
-    # Check required keys
-    if strict and expected_keys:
-        missing = expected_keys - checkpoint.keys()
-        if missing:
-            raise ValueError(f"Checkpoint missing required keys: {missing}")
-
-    # Log success
-    logger.info("\nCheckpoint loaded successfully:")
-    logger.info("  File: %s", checkpoint_path)
-    logger.info("  Size: %.2f MB", checkpoint_path.stat().st_size / (1024 * 1024))
-    logger.info("  Keys: %s", list(checkpoint.keys()))
-
-    return checkpoint
-
-def verify_state_dict(
-    state_dict: Dict[str, torch.Tensor],
-    model: nn.Module,
-    partial: bool = False
-) -> bool:
-    """Verify that a state dict is compatible with a model.
-    
     Args:
         state_dict: Model state dictionary
-        model: Target model instance
-        partial: Allow partial matches
-        
-    Returns:
-        bool: Whether verification passed
-        
+        model: Model instance to verify against
+
     Raises:
-        ValueError: If verification fails
+        ValueError: If state dict is incompatible
     """
     try:
+        # Get model's state dict for comparison
         model_state = model.state_dict()
         
-        # Check for missing or unexpected keys
-        missing = model_state.keys() - state_dict.keys()
-        unexpected = state_dict.keys() - model_state.keys()
+        # Check keys match
+        missing = [k for k in model_state.keys() if k not in state_dict]
+        unexpected = [k for k in state_dict.keys() if k not in model_state]
         
-        if not partial and (missing or unexpected):
-            raise ValueError(
-                f"State dict mismatch:\n"
-                f"Missing keys: {missing}\n"
-                f"Unexpected keys: {unexpected}"
-            )
+        if missing:
+            raise ValueError(f"Missing keys in state dict: {missing}")
+        if unexpected:
+            raise ValueError(f"Unexpected keys in state dict: {unexpected}")
             
-        # Verify tensor shapes match
-        for key in state_dict:
+        # Check tensor shapes match
+        mismatched = []
+        for key, val in state_dict.items():
             if key in model_state:
-                if state_dict[key].shape != model_state[key].shape:
-                    raise ValueError(
-                        f"Shape mismatch for {key}: "
-                        f"expected {model_state[key].shape}, "
-                        f"got {state_dict[key].shape}"
+                if val.shape != model_state[key].shape:
+                    mismatched.append(
+                        f"{key}: expected {model_state[key].shape}, got {val.shape}"
                     )
-                    
-        return True
         
+        if mismatched:
+            raise ValueError(f"Tensor shape mismatches: {mismatched}")
+            
     except Exception as e:
-        logger.error(f"State dict verification failed: {e}")
-        raise ValueError(f"Invalid state dict: {e}") from e
+        raise ValueError(f"State dict verification failed: {str(e)}") from e
