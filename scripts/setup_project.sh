@@ -5,7 +5,7 @@ mkdir -p _bert_local_dev
 cd _bert_local_dev
 
 # Create main project structure
-mkdir -p src/{config,models,training,tuning,utils,data,evaluation}
+mkdir -p src/{config,models,training,tuning,utils,evaluation}
 mkdir -p logs
 mkdir -p data
 mkdir -p tests
@@ -18,7 +18,6 @@ touch src/models/__init__.py
 touch src/training/__init__.py
 touch src/tuning/__init__.py
 touch src/utils/__init__.py
-touch src/data/__init__.py
 touch src/evaluation/__init__.py
 
 # Create main module files
@@ -27,7 +26,6 @@ touch src/models/model.py
 touch src/training/trainer.py
 touch src/tuning/optimize.py
 touch src/utils/{train_utils.py,logging_manager.py}
-touch src/data/loaders.py
 touch src/evaluation/metrics.py
 
 # Create test directories
