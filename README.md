@@ -81,6 +81,8 @@ bert_local_dev/
 - **src/evaluation/**: Evaluation tools and metrics
 - **src/utils/**: Common utilities and helpers
 
+Refer to the data utilities in `src/data_utils` instead of `src/data`.
+
 ## Quick Start
 
 ### 1. Basic Training
@@ -97,9 +99,11 @@ python -m src.training.train \
 python -m src.tuning.optimize \
     --max_seq_len 64 \
     --data_file "data/bbc-text.csv" \
-    --n_trials 50 \
+    --n_trials 3 \
     --study_name "bert_opt" \
     --metric f1
+
+# python -m src.tuning.optimize --max_seq_len 64 --data_file "data/bbc-text.csv" --n_trials 3 --study_name "bert_opt" --metric f1
 ```
 
 ### 3. Model Evaluation
@@ -107,6 +111,9 @@ python -m src.tuning.optimize \
 python -m src.evaluation.evaluator \
     --best_model "best_trials/bert_classifier.pth" \
     --output_dir "evaluation_results"
+
+# python -m src.evaluation.evaluator \
+#     --best_model "best_trials/best_model_weights.pth"
 ```
 
 ## Architecture Details
@@ -146,11 +153,10 @@ config = {
 ## Data Format
 
 Required CSV format:
-```csv
-text,category
-"Sample text 1","class_a"
-"Sample text 2","class_b"
 ```
+<userPrompt>
+Rewrite the code in the current editor to incorporate the suggested code change.
+</userPrompt>
 
 Requirements:
 - UTF-8 encoding

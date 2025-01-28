@@ -124,15 +124,17 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
     
     # Use optimizer factory if optimizer is specified in config
     optimizer_name = clf_config.get('optimizer', 'adamw')
-    optimizer_config = clf_config.get('optimizer_config', {
+    optimizer_params = {
         'learning_rate': clf_config.get('learning_rate', model_config.learning_rate),
-        'weight_decay': clf_config.get('weight_decay', 0.01)
-    })
+        'weight_decay': clf_config.get('weight_decay', 0.01),
+        'beta1': clf_config.get('beta1', 0.9),
+        'beta2': clf_config.get('beta2', 0.999)
+    }
     
     optimizer = create_optimizer(
         optimizer_name,
         model.parameters(),
-        **optimizer_config
+        **optimizer_params
     )
     
     total_steps = len(train_dataloader) * model_config.num_epochs

@@ -4,7 +4,7 @@ import time
 import warnings
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Iterator
 
 import optuna
 import torch
@@ -32,23 +32,61 @@ warnings.filterwarnings('ignore', category=ExperimentalWarning)
 
 logger = setup_logger(__name__)
 
-def create_optimizer(optimizer_name: str, model_params, **kwargs) -> optim.Optimizer:
-    """Create optimizer instance based on name and parameters."""
-    optimizers = {
-        'adamw': optim.AdamW,
-        'sgd': optim.SGD,
-        'rmsprop': optim.RMSprop,
-        'adagrad': optim.Adagrad
+def create_optimizer(
+    optimizer_name: str,
+    model_params: Iterator[torch.nn.Parameter],
+    **kwargs
+) -> torch.optim.Optimizer:
+    """Create optimizer instance with proper parameter mapping.
+    
+    Args:
+        optimizer_name: Name of optimizer to create
+        model_params: Model parameters to optimize
+        **kwargs: Optimizer configuration parameters
+        
+    Returns:
+        Configured optimizer instance
+        
+    Raises:
+        ValueError: If optimizer_name is invalid
+    """
+    # Map common parameter names to optimizer-specific names
+    param_mapping = {
+        'learning_rate': 'lr',
+        'weight_decay': 'weight_decay',
+        'momentum': 'momentum',
+        'beta1': 'betas[0]',
+        'beta2': 'betas[1]'
     }
     
-    if optimizer_name not in optimizers:
-        raise ValueError(f"Unsupported optimizer: {optimizer_name}")
-        
-    # Add momentum for SGD if not provided
-    if optimizer_name == 'sgd' and 'momentum' not in kwargs:
-        kwargs['momentum'] = 0.9
-        
-    return optimizers[optimizer_name](model_params, **kwargs)
+    # Convert parameters using mapping
+    optimizer_kwargs = {}
+    for key, value in kwargs.items():
+        if key in param_mapping:
+            mapped_key = param_mapping[key]
+            if '[' in mapped_key:  # Handle nested params like betas
+                base_key, idx = mapped_key.split('[')
+                idx = int(idx.rstrip(']'))
+                if base_key not in optimizer_kwargs:
+                    optimizer_kwargs[base_key] = [0.9, 0.999]  # Default AdamW betas
+                optimizer_kwargs[base_key][idx] = value
+            else:
+                optimizer_kwargs[mapped_key] = value
+        else:
+            optimizer_kwargs[key] = value
+
+    optimizers = {
+        'adam': optim.Adam,
+        'adamw': optim.AdamW,
+        'sgd': optim.SGD,
+        'rmsprop': optim.RMSprop
+    }
+    
+    if optimizer_name.lower() not in optimizers:
+        raise ValueError(f"Unknown optimizer: {optimizer_name}. "
+                       f"Available optimizers: {list(optimizers.keys())}")
+    
+    return optimizers[optimizer_name.lower()](model_params, **optimizer_kwargs)
 
 def _create_study(name: str, storage: Optional[str] = None, 
                 sampler_type: str = 'tpe', random_seed: Optional[int] = None) -> optuna.Study:
