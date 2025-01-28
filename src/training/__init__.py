@@ -1,7 +1,6 @@
-from .dataset import TextClassificationDataset
+"""Training module init."""
 from .trainer import Trainer
 
 __all__ = [
-    'TextClassificationDataset',
     'Trainer'
 ]

@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from ..config.config import EvaluationConfig, ModelConfig
 from ..models.model import BERTClassifier
 from ..utils.metrics import calculate_metrics
-from ..utils.train_utils import load_and_preprocess_data, create_dataloaders
+from ..data_utils import load_and_preprocess_data, create_dataloaders
 from ..utils.logging_manager import setup_logger
 from ..utils.model_loading import safe_load_checkpoint, verify_state_dict
 

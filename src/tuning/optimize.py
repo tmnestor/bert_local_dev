@@ -19,11 +19,13 @@ from sklearn.model_selection import train_test_split
 from ..config.config import ModelConfig
 from ..models.model import BERTClassifier
 from ..training.trainer import Trainer
-from ..utils.train_utils import (
+from ..data_utils import (
     load_and_preprocess_data,
+    create_dataloaders
+)
+from ..utils.train_utils import (
     initialize_progress_bars,
-    log_separator,
-    create_dataloaders  # Move this function to train_utils
+    log_separator
 )
 from ..utils.logging_manager import setup_logger
 

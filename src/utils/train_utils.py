@@ -1,136 +1,13 @@
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Tuple
 
-import pandas as pd
 import torch
-from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer
 
-from ..config.config import ModelConfig
-from ..training.dataset import TextClassificationDataset
 from ..utils.logging_manager import setup_logger
-from .data_splitter import DataSplitter, DataSplit
 
-# Add logger initialization
 logger = setup_logger(__name__)
-
-def load_and_preprocess_data(config: ModelConfig, validation_mode: bool = False) -> Union[
-    Tuple[List[str], List[str], List[int], List[int], LabelEncoder],  # Training mode
-    Tuple[List[str], List[int], LabelEncoder]  # Validation mode
-]:
-    """Load and preprocess data using DataSplitter.
-
-    Args:
-        config: ModelConfig instance containing data parameters.
-        validation_mode: If True, return test set only.
-
-    Returns:
-        In training mode:
-            - train_texts, val_texts: Lists of text samples
-            - train_labels, val_labels: Lists of integer labels
-            - label_encoder: Fitted LabelEncoder
-        In validation mode:
-            - test_texts: List of text samples
-            - test_labels: List of integer labels
-            - label_encoder: Fitted LabelEncoder
-
-    Raises:
-        ValueError: If num_classes doesn't match dataset.
-        FileNotFoundError: If data file not found.
-    """
-    splitter = DataSplitter(config.data_file.parent)
-    
-    try:
-        # Try to load existing splits first
-        splits = splitter.load_splits()
-        logger.info("Using existing data splits")
-    except FileNotFoundError:
-        # Create new splits if they don't exist
-        logger.info("Creating new data splits...")
-        splits = splitter.create_splits(config.data_file)
-    
-    # Set num_classes if not explicitly specified
-    if config.num_classes is None:
-        config.num_classes = splits.num_classes
-    elif config.num_classes != splits.num_classes:
-        raise ValueError(f"Specified num_classes ({config.num_classes}) does not match dataset ({splits.num_classes})")
-    
-    logger.info("\nData Split Information:")
-    total = len(splits.train_texts) + len(splits.val_texts) + len(splits.test_texts)
-    logger.info("Total samples: %d", total)
-    logger.info("Training: %d (%.1f%%)", len(splits.train_texts), 100 * len(splits.train_texts) / total)
-    logger.info("Validation: %d (%.1f%%)", len(splits.val_texts), 100 * len(splits.val_texts) / total)
-    logger.info("Test: %d (%.1f%%)", len(splits.test_texts), 100 * len(splits.test_texts) / total)
-    
-    if validation_mode:
-        logger.info(f"Using test set with {len(splits.test_texts)} samples")
-        return splits.test_texts, splits.test_labels, splits.label_encoder
-    
-    logger.info(f"Split sizes: {len(splits.train_texts)} train, {len(splits.val_texts)} validation")
-    return (
-        splits.train_texts,
-        splits.val_texts,
-        splits.train_labels,
-        splits.val_labels,
-        splits.label_encoder
-    )
-
-def create_dataloaders(
-    texts: List[str], 
-    labels: List[int],
-    config: ModelConfig,
-    batch_size: int,
-    validation_mode: bool = False
-) -> Union[Tuple[DataLoader, DataLoader], DataLoader]:
-    """Create PyTorch DataLoaders for training or validation.
-
-    Args:
-        texts: Text samples or [train_texts, val_texts] in training mode.
-        labels: Labels or [train_labels, val_labels] in training mode.
-        config: ModelConfig instance.
-        batch_size: Batch size for DataLoader.
-        validation_mode: If True, create single test DataLoader.
-
-    Returns:
-        In training mode: (train_dataloader, val_dataloader)
-        In validation mode: test_dataloader
-
-    Raises:
-        ValueError: If texts/labels format is invalid.
-    """
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.bert_model_name,
-        clean_up_tokenization_spaces=True
-    )
-    
-    if validation_mode:
-        test_dataset = TextClassificationDataset(
-            texts, labels, tokenizer, 
-            max_seq_len=config.max_seq_len  # Updated from max_length
-        )
-        return DataLoader(test_dataset, batch_size=batch_size)
-    
-    # For training, texts and labels are passed as lists containing train and val splits
-    if not isinstance(texts, (list, tuple)) or len(texts) != 2:
-        raise ValueError("Expected texts to be a list/tuple of [train_texts, val_texts]")
-    if not isinstance(labels, (list, tuple)) or len(labels) != 2:
-        raise ValueError("Expected labels to be a list/tuple of [train_labels, val_labels]")
-    
-    train_texts, val_texts = texts
-    train_labels, val_labels = labels
-    
-    # Create datasets - update to use max_seq_len
-    train_dataset = TextClassificationDataset(train_texts, train_labels, tokenizer, config.max_seq_len)
-    val_dataset = TextClassificationDataset(val_texts, val_labels, tokenizer, config.max_seq_len)
-    
-    # Create and return dataloaders
-    return (
-        DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
-        DataLoader(val_dataset, batch_size=batch_size)
-    )
 
 def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
     """Initialize progress bars for training/tuning."""
@@ -165,8 +42,5 @@ def save_model_state(
         'num_classes': config['num_classes']
     }, save_path)
 
-
-
 def log_separator(logger_instance: logging.Logger) -> None:
-
     logger_instance.info("\n" + "="*80)

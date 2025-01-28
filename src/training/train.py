@@ -9,12 +9,12 @@ from transformers import get_linear_schedule_with_warmup
 from ..config.config import ModelConfig
 from ..models.model import BERTClassifier
 from .trainer import Trainer
-from ..utils.train_utils import (
-    load_and_preprocess_data,
+from ..data_utils import (
+    load_and_preprocess_data, 
     create_dataloaders,
-    initialize_progress_bars,
-    save_model_state
+    TextClassificationDataset
 )
+from ..utils.train_utils import initialize_progress_bars, save_model_state
 from ..utils.logging_manager import setup_logger
 from ..config.defaults import CLASSIFIER_DEFAULTS
 from ..tuning.optimize import create_optimizer  # Update this import
