@@ -42,25 +42,88 @@ python scripts/download_BERT.py
 
 ### 2. Train
 ```bash
+# Basic usage with direct path
 python -m src.training.train \
-    --data_file "data/your_data.csv" \
-    --bert_model_name "./bert_encoder" \
-    --batch_size 32
+    --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+    --num_epochs 10 \
+    --batch_size 32 \
+    --bert_model_name "/Users/tod/BERT_TRAINING/bert_encoder" \
+    --output_root "/Users/tod/BERT_TRAINING"
+
+# python -m src.training.train \
+#     --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+#     --bert_model_name "/Users/tod/BERT_TRAINING/bert_encoder" \
+#     --num_epochs 10 \
+#     --batch_size 32
+
+# # Usage with directories.yml configuration
+# python -m src.training.train \
+#     --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+#     --output_root "/Users/tod/BERT_TRAINING" \
+#     --num_epochs 10 \
+#     --batch_size 32 \
+#     --device cpu
 ```
 
 ### 3. Optimize
 ```bash
 python -m src.tuning.optimize \
-    --data_file "data/your_data.csv" \
-    --n_trials 50 \
-    --study_name "bert_opt"
+    --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+    --n_trials 5 \
+    --study_name "bert_opt" \
+    --batch_size 32 \
+    --device cpu
+
+# python -m src.tuning.optimize \
+#     --data_file "data/dataset.csv" \
+#     --n_trials 100 \
+#     --n_experiments 3 \
+#     --study_name "bert_opt" \
+#     --sampler tpe \
+#     --metric f1 \
+#     --device cuda \
+#     --timeout 36000
+
+# python -m src.tuning.optimize \
+#     --data_file "data/dataset.csv" \
+#     --output_root /custom/output/path \
+#     --bert_encoder_path /path/to/bert/encoder \
+#     --n_trials 50 \
+#     --study_name "bert_opt" \
+#     --sampler tpe \
+#     --metric f1 \
+#     --device cuda \
+#     --batch_size 32 \
+#     --max_seq_len 128 \
+#     --seed 42
 ```
 
 ### 4. Evaluate
 ```bash
 python -m src.evaluation.evaluator \
+    --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+    --best_model "/Users/tod/BERT_TRAINING/best_trials/bert_classifier.pth" \
+    --device cpu \
+    --max_seq_len 128
+
+python -m src.evaluation.evaluator \
+    --data_file "data/dataset.csv" \
     --best_model "best_trials/best_model.pt" \
-    --output_dir "evaluation_results"
+    --output_dir "custom_evaluation_results" \
+    --metrics accuracy f1 precision recall \
+    --device cou \
+    --batch_size 64
+
+python -m src.evaluation.evaluator \
+    --data_file "data/dataset.csv" \
+    --best_model "best_trials/best_model.pt" \
+    --output_root /custom/output/path \
+    --bert_encoder_path /path/to/bert/encoder \
+    --output_dir "evaluation_results" \
+    --metrics accuracy f1 \
+    --device cuda \
+    --batch_size 32 \
+    --max_seq_len 128
 ```
 
 ## Data Format
@@ -78,6 +141,37 @@ Requirements:
 - Headers: "text", "category"
 
 ## Configuration
+
+### Directory Structure
+Place `directories.yml` in the project root:
+
+```yaml
+output_root: /path/to/outputs
+dirs:
+  best_trials: best_trials
+  checkpoints: checkpoints
+  evaluation: evaluation_results
+  logs: logs
+  data: data
+  models: models
+
+model_paths:
+  bert_encoder: /absolute/path/to/bert/encoder  # or relative: models/bert_encoder
+```
+
+Configuration precedence:
+1. Command line arguments (highest priority)
+2. Project root `directories.yml`
+3. Environment variable `BERT_DIR_CONFIG`
+4. Default values (lowest priority)
+
+Override using command line:
+```bash
+python -m src.training.train \
+    --output_root /custom/output/path \
+    --bert_encoder_path /path/to/bert/encoder \
+    --dir_config /path/to/custom/directories.yml
+```
 
 ### Model Settings
 ```python

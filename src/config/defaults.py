@@ -1,5 +1,7 @@
 """Default configuration values."""
 import torch
+import os
+from pathlib import Path
 
 # Model architecture defaults
 MODEL_DEFAULTS = {
@@ -21,6 +23,24 @@ OPTIM_SEARCH_SPACE = {
     'learning_rate': (1e-5, 1e-3),  # log scale
     'weight_decay': (1e-8, 1e-3),   # log scale
     'warmup_ratio': (0.0, 0.2)
+}
+
+# Directory configuration defaults
+DIR_DEFAULTS = {
+    'output_root': Path('outputs'),
+    'dirs': {
+        'best_trials': 'best_trials',
+        'checkpoints': 'checkpoints',
+        'evaluation': 'evaluation_results',
+        'logs': 'logs',
+        'data': 'data',
+        'models': 'models',  # Add models directory
+    }
+}
+
+# Model paths
+MODEL_PATHS = {
+    'bert_encoder': 'models/bert_encoder',  # Default BERT encoder location
 }
 
 # Classifier architecture defaults 

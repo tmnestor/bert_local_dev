@@ -38,5 +38,22 @@ touch data/.gitkeep
 
 echo "Directory structure created successfully"
 
+# Create default directories.yml in project root
+cat > directories.yml << EOL
+output_root: outputs
+dirs:
+  best_trials: best_trials
+  checkpoints: checkpoints
+  evaluation: evaluation_results
+  logs: logs
+  data: data
+  models: models
+
+model_paths:
+  bert_encoder: models/bert_encoder
+EOL
+
+echo "Default directories.yml created in project root"
+
 # Make script executable
 chmod +x "$0"

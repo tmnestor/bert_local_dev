@@ -62,8 +62,9 @@ class BaseConfig:
     @classmethod
     def from_dict(cls: Type[T], config_dict: Dict[str, Any]) -> T:
         """Create instance from dictionary"""
-        field_names = {f.name for f in fields(cls)}
-        filtered_dict = {k: v for k, v in config_dict.items() if k in field_names}
+        # Get all fields that should be initialized
+        init_fields = {f.name for f in fields(cls) if f.init}
+        filtered_dict = {k: v for k, v in config_dict.items() if k in init_fields}
         return cls(**filtered_dict)
 
     @classmethod

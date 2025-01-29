@@ -1,69 +1,57 @@
 import logging
-from pathlib import Path
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Optional, TYPE_CHECKING
 
-def setup_logger(name: str, log_dir: Path = Path("logs")) -> logging.Logger:
-    """Setup a logger with both file and console output.
+if TYPE_CHECKING:
+    from ..config.config import ModelConfig
 
-    Sets up a logger with handlers for both file output (with detailed formatting) 
-    and console output (with simplified formatting). Creates timestamped log files.
+def setup_logger(name: str, config: Optional["ModelConfig"] = None) -> logging.Logger:
+    """Setup logger using configuration directory paths.
 
     Args:
-        name: Logger name (typically __name__).
-        log_dir: Directory to store log files (default: "logs").
+        name: Logger name (typically __name__)
+        config: ModelConfig instance. If provided, uses its logs_dir for file output.
+               If None, only console output is setup.
 
     Returns:
-        Logger: Configured logging.Logger instance.
-
-    Raises:
-        OSError: If log directory cannot be created.
+        logging.Logger: Configured logger instance
     """
-    # Create logs directory
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Create logger
     logger = logging.getLogger(name)
     if logger.hasHandlers():
         return logger
     
     logger.setLevel(logging.INFO)
     
-    # Create formatters
-    file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    # Console formatter - Fix typo in levelname
     console_formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s'
+        '%(asctime)s - %(levelname)s - %(message)s'  # Changed from levellevel to levelname
     )
     
-    # File handler - use timestamp in filename
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    file_handler = logging.FileHandler(
-        log_dir / f'bert_classifier_{timestamp}.log'
-    )
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(file_formatter)
-    
-    # Console handler
+    # Always add console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(console_formatter)
-    
-    # Add handlers
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    
+    # Only add file handler if config with logs_dir is provided
+    if config is not None and hasattr(config, 'logs_dir'):
+        # File formatter with more details
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
+        # Setup file handler with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = config.logs_dir / f'bert_classifier_{timestamp}.log'
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
+        logger.info(f"Logging to: {log_file}")
     
     return logger
 
-def get_log_dir() -> Path:
-    """Get the path to the log directory.
-
-    Returns:
-        Path: Path object pointing to the logs directory.
-    """
-    return Path("logs")
-
-# Global logger instance for common use
-global_logger = setup_logger('bert_classifier')
+# Remove global logger - each module should instantiate its own

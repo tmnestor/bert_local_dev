@@ -1,13 +1,20 @@
 import argparse
 import logging
+import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+import yaml
 
 import torch
 
 from .base_config import BaseConfig
-from .defaults import MODEL_DEFAULTS, CLASSIFIER_DEFAULTS
+from .defaults import (
+    MODEL_DEFAULTS, 
+    CLASSIFIER_DEFAULTS,
+    DIR_DEFAULTS,
+    MODEL_PATHS
+)
 
 # Add logger at module level
 logger = logging.getLogger(__name__)
@@ -16,25 +23,99 @@ VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
 
 @dataclass
 class ModelConfig(BaseConfig):
-    bert_model_name: str = './bert_encoder'  # Update default value
-    num_classes: Optional[int] = None  # Changed from fixed 5 to Optional[int]
+    # Fields that should be initialized
+    bert_model_name: str = './bert_encoder'
+    num_classes: Optional[int] = None
     max_seq_len: int = MODEL_DEFAULTS['max_seq_len']
     batch_size: int = CLASSIFIER_DEFAULTS['standard']['batch_size']
-    num_epochs: int = 10  # Number of epochs
+    num_epochs: int = 10
     learning_rate: float = CLASSIFIER_DEFAULTS['standard']['learning_rate']
     device: str = MODEL_DEFAULTS['device']
     data_file: Path = Path("data/bbc-text.csv")
-    best_trials_dir: Path = Path("best_trials")  # Base directory
-    model_save_path: Path = Path("best_trials/bert_classifier.pth")  # Final model path
     hidden_dropout: float = 0.1
-    n_trials: Optional[int] = field(default=100)  # Change to use field with default
-    n_experiments: int = 1  # Number of experiments to run
-    trials_per_experiment: Optional[int] = field(default=None)  # Make explicitly Optional with field
-    sampler: str = 'tpe'  # Default sampler is 'tpe'
-    metric: str = 'f1'  # Single metric for training/optimization
-    metrics: List[str] = field(  # Multiple metrics for evaluation
+    n_trials: Optional[int] = field(default=100)
+    n_experiments: int = 1
+    trials_per_experiment: Optional[int] = field(default=None)
+    sampler: str = 'tpe'
+    metric: str = 'f1'
+    metrics: List[str] = field(
         default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
     )
+    output_root: Path = DIR_DEFAULTS['output_root']
+    
+    # Remove default values for paths that should be under output_root
+    model_save_path: Path = field(init=False)  # Will be set in post_init
+    best_trials_dir: Path = field(init=False)
+    checkpoint_dir: Path = field(init=False)
+    evaluation_dir: Path = field(init=False)
+    logs_dir: Path = field(init=False)
+    data_dir: Path = field(init=False)
+    models_dir: Path = field(init=False)
+    
+    def __post_init__(self):
+        """Initialize directory paths after initialization."""
+        self._init_directories()
+        # Ensure model_save_path is under output_root/best_trials
+        self.model_save_path = self.best_trials_dir / "bert_classifier.pth"
+        
+    def _init_directories(self):
+        """Initialize directory configurations from file or defaults."""
+        # First try project root, then environment variable
+        config_paths = [
+            Path.cwd() / 'directories.yml',  # Project root
+            Path(os.environ.get('BERT_DIR_CONFIG', 'config/directories.yml'))  # Fallback
+        ]
+        
+        config_file = next((p for p in config_paths if p.exists()), None)
+        
+        try:
+            if (config_file):
+                logger.info(f"Loading directory configuration from: {config_file}")
+                with open(config_file) as f:
+                    dir_config = yaml.safe_load(f)
+                output_root = Path(dir_config.get('output_root', DIR_DEFAULTS['output_root']))
+                dirs = dir_config.get('dirs', DIR_DEFAULTS['dirs'])
+                model_paths = dir_config.get('model_paths', {'bert_encoder': MODEL_PATHS['bert_encoder']})
+            else:
+                logger.info("No configuration file found, using defaults")
+                output_root = DIR_DEFAULTS['output_root']
+                dirs = DIR_DEFAULTS['dirs']
+                model_paths = {'bert_encoder': MODEL_PATHS['bert_encoder']}
+                
+            self.output_root = output_root
+            # Setup standard directories
+            self.best_trials_dir = output_root / dirs['best_trials']
+            self.checkpoint_dir = output_root / dirs['checkpoints']
+            self.evaluation_dir = output_root / dirs['evaluation']
+            self.logs_dir = output_root / dirs['logs']
+            self.data_dir = output_root / dirs['data']
+            self.models_dir = output_root / dirs['models']
+            
+            # Add debug logging for BERT encoder path
+            logger.info("Configuring BERT encoder path:")
+            logger.info("  Output root: %s", output_root)
+            logger.info("  Model paths from config: %s", model_paths)
+            logger.info("  BERT encoder relative path: %s", model_paths['bert_encoder'])
+            
+            # Setup BERT encoder path - can be absolute or relative to output_root
+            bert_path = Path(model_paths['bert_encoder'])
+            if not bert_path.is_absolute():
+                bert_path = output_root / bert_path
+            self.bert_model_name = str(bert_path)
+            logger.info("  BERT model path: %s", self.bert_model_name)
+            logger.info("  Path exists: %s", Path(self.bert_model_name).exists())
+            
+        except Exception as e:
+            logger.warning(f"Failed to load directory config: {e}")
+            self._init_default_directories()
+            
+    def _init_default_directories(self):
+        """Initialize directories with default values."""
+        self.best_trials_dir = self.output_root / DIR_DEFAULTS['dirs']['best_trials']
+        self.checkpoint_dir = self.output_root / DIR_DEFAULTs['dirs']['checkpoints']
+        self.evaluation_dir = self.output_root / DIR_DEFAULTS['dirs']['evaluation']
+        self.logs_dir = self.output_root / DIR_DEFAULTS['dirs']['logs']
+        self.data_dir = self.output_root / DIR_DEFAULTS['dirs']['data']
 
     def _validate_metrics(self, metrics: List[str]) -> None:
         """Validate metrics configuration"""
@@ -97,10 +178,11 @@ class ModelConfig(BaseConfig):
         paths = parser.add_argument_group('File Paths')
         paths.add_argument('--data_file', type=Path, default=cls.data_file,
                           help='Path to input data file')
-        paths.add_argument('--model_save_path', type=Path, default=cls.model_save_path,
+        # Remove default value for model_save_path, will be set based on output_root
+        paths.add_argument('--model_save_path', type=Path,
                           help='Path to save the trained model')
-        # Add best trials directory argument
-        paths.add_argument('--best_trials_dir', type=Path, default=cls.best_trials_dir,
+        # Remove default value for best_trials_dir, will be set based on output_root
+        paths.add_argument('--best_trials_dir', type=Path,
                           help='Directory to save best trial models and results')
 
         # Experiment settings
@@ -109,6 +191,19 @@ class ModelConfig(BaseConfig):
                               help='Number of experiments to run')
         experiment.add_argument('--trials_per_experiment', type=int, default=cls.trials_per_experiment,
                               help='Number of trials per experiment. If not set, uses n_trials')
+        
+        # Add directory configuration arguments
+        dirs = parser.add_argument_group('Directory Configuration')
+        dirs.add_argument('--output_root', type=Path, 
+                         default=DIR_DEFAULTS['output_root'],
+                         help='Root directory for all outputs')
+        dirs.add_argument('--dir_config', type=Path,
+                         default='config/directories.yml',
+                         help='Path to directory configuration YAML')
+        
+        # Remove bert_encoder_path argument
+        model_paths = parser.add_argument_group('Model Paths')
+        # No additional arguments needed here now
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':
@@ -129,6 +224,7 @@ class ModelConfig(BaseConfig):
         self._validate_training_params()
         self._validate_system_params()
         self._validate_experiment_params()
+        self._validate_model_paths()
 
     def _validate_training_params(self) -> None:
         """Validate training-related parameters"""
@@ -170,6 +266,14 @@ class ModelConfig(BaseConfig):
         # Final validation of n_trials
         if self.n_trials < 1:
             raise ValueError("n_trials must be positive")
+    
+    def _validate_model_paths(self) -> None:
+        """Validate model paths."""
+        if not Path(self.bert_model_name).exists():
+            raise FileNotFoundError(
+                f"BERT model not found at: {self.bert_model_name}\n"
+                "Please specify correct path in directories.yml or via --bert_model_name"
+            )
 
 @dataclass
 class ValidationConfig(ModelConfig):
