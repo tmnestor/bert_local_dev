@@ -23,24 +23,24 @@ VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
 
 @dataclass
 class ModelConfig(BaseConfig):
-    # Fields that should be initialized
+    # Fields that should be initialized with defaults from config.yml
     bert_model_name: str = './bert_encoder'
     num_classes: Optional[int] = None
     max_seq_len: int = MODEL_DEFAULTS['max_seq_len']
-    batch_size: int = CLASSIFIER_DEFAULTS['standard']['batch_size']
-    num_epochs: int = 10
-    learning_rate: float = CLASSIFIER_DEFAULTS['standard']['learning_rate']
+    batch_size: int = MODEL_DEFAULTS['batch_size']
+    num_epochs: int = MODEL_DEFAULTS['num_epochs']
+    learning_rate: float = MODEL_DEFAULTS['learning_rate']
     device: str = MODEL_DEFAULTS['device']
+    hidden_dropout: float = MODEL_DEFAULTS['hidden_dropout']
+    metric: str = MODEL_DEFAULTS['metric']
+    metrics: List[str] = field(
+        default_factory=lambda: MODEL_DEFAULTS['metrics']
+    )
     data_file: Path = Path("data/bbc-text.csv")
-    hidden_dropout: float = 0.1
     n_trials: Optional[int] = field(default=100)
     n_experiments: int = 1
     trials_per_experiment: Optional[int] = field(default=None)
     sampler: str = 'tpe'
-    metric: str = 'f1'
-    metrics: List[str] = field(
-        default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
-    )
     output_root: Path = DIR_DEFAULTS['output_root']
     
     # Remove default values for paths that should be under output_root
@@ -90,6 +90,10 @@ class ModelConfig(BaseConfig):
             self.logs_dir = output_root / dirs['logs']
             self.data_dir = output_root / dirs['data']
             self.models_dir = output_root / dirs['models']
+            
+            # Update data_file to be under data_dir if it's not an absolute path
+            if not Path(self.data_file).is_absolute():
+                self.data_file = self.data_dir / self.data_file.name
             
             # Add debug logging for BERT encoder path
             logger.info("Configuring BERT encoder path:")
@@ -404,13 +408,31 @@ class EvaluationConfig(ModelConfig):
     output_dir: Path = field(init=False)
     metrics: List[str] = field(default_factory=lambda: ["accuracy", "f1", "precision", "recall"])
     
-    # Add class-level constant for default metrics
     DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
     
     def __post_init__(self):
         """Initialize paths after parent initialization."""
+        # First do parent initialization to set up directories
         super().__post_init__()
+        
+        # Set output_dir to evaluation_dir
         self.output_dir = self.evaluation_dir
+        
+        # Convert relative best_model path to absolute using output_root if needed
+        if self.best_model and not self.best_model.is_absolute():
+            # Look for best_model relative to output_root first
+            best_model_path = self.output_root / self.best_model
+            if best_model_path.exists():
+                self.best_model = best_model_path
+            else:
+                # Try relative to best_trials_dir
+                best_model_path = self.best_trials_dir / self.best_model.name
+                if best_model_path.exists():
+                    self.best_model = best_model_path
+                else:
+                    logger.warning(f"Best model not found at either:\n"
+                                 f"  {best_model_path}\n"
+                                 f"  {self.best_trials_dir / self.best_model.name}")
     
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:

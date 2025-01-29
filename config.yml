@@ -1,0 +1,34 @@
+# Directory structure
+output_root: /Users/tod/BERT_TRAINING
+dirs:
+  best_trials: best_trials
+  checkpoints: checkpoints
+  evaluation: evaluation_results
+  logs: logs
+  data: data
+  models: models
+
+# Model paths
+model_paths:
+  bert_encoder: bert_encoder  # Path relative to output_root
+
+# Model defaults
+model:
+  max_seq_len: 64
+  batch_size: 32
+  num_epochs: 10
+  learning_rate: 2e-5
+  hidden_dropout: 0.1
+  device: cpu
+  metric: f1
+  metrics: ["accuracy", "f1", "precision", "recall"]
+
+# Classifier architecture defaults
+classifier:
+  standard:
+    num_layers: 2
+    hidden_dim: 256
+    activation: gelu
+    dropout_rate: 0.1
+    weight_decay: 0.01
+    warmup_ratio: 0.1

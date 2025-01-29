@@ -42,13 +42,12 @@ python scripts/download_BERT.py
 
 ### 2. Train
 ```bash
-# Basic usage with direct path
+# Basic usage (data must be in /Users/tod/BERT_TRAINING/data/bbc-text.csv)
 python -m src.training.train \
-    --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+    --data_file "bbc-text.csv" \
+    --output_root "/Users/tod/BERT_TRAINING" \
     --num_epochs 10 \
-    --batch_size 32 \
-    --bert_model_name "/Users/tod/BERT_TRAINING/bert_encoder" \
-    --output_root "/Users/tod/BERT_TRAINING"
+    --batch_size 32
 
 # python -m src.training.train \
 #     --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
@@ -68,7 +67,8 @@ python -m src.training.train \
 ### 3. Optimize
 ```bash
 python -m src.tuning.optimize \
-    --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
+    --data_file "bbc-text.csv" \
+    --output_root "/Users/tod/BERT_TRAINING" \
     --n_trials 5 \
     --study_name "bert_opt" \
     --batch_size 32 \
@@ -100,10 +100,11 @@ python -m src.tuning.optimize \
 
 ### 4. Evaluate
 ```bash
+# Evaluate model (paths are relative to output_root)
 python -m src.evaluation.evaluator \
-    --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
-    --best_model "/Users/tod/BERT_TRAINING/best_trials/bert_classifier.pth" \
+    --data_file "bbc-text.csv" \
     --output_root "/Users/tod/BERT_TRAINING" \
+    --best_model "best_trials/bert_classifier.pth" \
     --device cpu
 ```
 
@@ -123,10 +124,11 @@ Requirements:
 
 ## Configuration
 
-### Directory Structure
-Place `directories.yml` in the project root:
+### Configuration File
+Place `config.yml` in the project root:
 
 ```yaml
+# Directory structure
 output_root: /path/to/outputs
 dirs:
   best_trials: best_trials
@@ -136,23 +138,23 @@ dirs:
   data: data
   models: models
 
+# Model paths and configuration
 model_paths:
-  bert_encoder: /absolute/path/to/bert/encoder  # or relative: models/bert_encoder
+  bert_encoder: /path/to/bert/encoder
+
+model:
+  max_seq_len: 64
+  batch_size: 32
+  num_epochs: 10
+  learning_rate: 2e-5
+  # ...other model defaults...
 ```
 
 Configuration precedence:
 1. Command line arguments (highest priority)
-2. Project root `directories.yml`
-3. Environment variable `BERT_DIR_CONFIG`
+2. Project root `config.yml`
+3. Environment variable `BERT_CONFIG`
 4. Default values (lowest priority)
-
-Override using command line:
-```bash
-python -m src.training.train \
-    --output_root /custom/output/path \
-    --bert_encoder_path /path/to/bert/encoder \
-    --dir_config /path/to/custom/directories.yml
-```
 
 ### Model Settings
 ```python

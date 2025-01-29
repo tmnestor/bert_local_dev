@@ -281,25 +281,23 @@ class ModelEvaluator:
 def main():
     """Command-line interface entry point for model evaluation."""
     parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
-    
-    # Use EvaluationConfig instead of ModelConfig to get proper directory handling
     EvaluationConfig.add_argparse_args(parser)
-    
     args = parser.parse_args()
-    
-    # Create EvaluationConfig instead of ModelConfig
     config = EvaluationConfig.from_args(args)
     
     try:
-        logger.info(f"Loading model from: {args.best_model}")
+        best_model = Path(args.best_model)
+        if not best_model.is_absolute():
+            best_model = config.output_root / best_model
+            
+        logger.info(f"Loading model from: {best_model}")
         evaluator = ModelEvaluator(
-            model_path=args.best_model,
-            config=config  # Pass EvaluationConfig instance
+            model_path=best_model,  # Pass resolved path
+            config=config
         )
-        # Don't override output_dir here - let EvaluationConfig handle it
         metrics, _ = evaluator.evaluate(
             save_predictions=True,
-            output_dir=config.evaluation_dir  # Use evaluation_dir from config
+            output_dir=config.evaluation_dir
         )
         logger.info("Evaluation completed successfully")
     except Exception as e:
