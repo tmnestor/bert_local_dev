@@ -42,6 +42,8 @@ DIR_DEFAULTS = {
     'dirs': CONFIG['dirs']
 }
 
+DATA_DEFAULTS = CONFIG.get('data', {'default_file': 'bbc-text.csv'})  # Add this line
+
 MODEL_PATHS = CONFIG['model_paths']
 
 MODEL_DEFAULTS = CONFIG['model']

@@ -13,17 +13,28 @@ from .defaults import (
     MODEL_DEFAULTS, 
     CLASSIFIER_DEFAULTS,
     DIR_DEFAULTS,
-    MODEL_PATHS
+    MODEL_PATHS,
+    DATA_DEFAULTS  # Add this import
 )
 
 # Add logger at module level
 logger = logging.getLogger(__name__)
-
 VALID_METRICS = {'accuracy', 'f1', 'precision', 'recall'}
 
 @dataclass
 class ModelConfig(BaseConfig):
-    # Fields that should be initialized with defaults from config.yml
+    # Class-level defaults for argparse
+    DEFAULT_DATA_FILE = Path(DATA_DEFAULTS['default_file'])
+    DEFAULT_NUM_EPOCHS = MODEL_DEFAULTS['num_epochs']
+    DEFAULT_BATCH_SIZE = MODEL_DEFAULTS['batch_size']
+    DEFAULT_LEARNING_RATE = MODEL_DEFAULTS['learning_rate']
+    DEFAULT_DEVICE = MODEL_DEFAULTS['device']
+    DEFAULT_HIDDEN_DROPOUT = MODEL_DEFAULTS['hidden_dropout']
+    DEFAULT_MAX_SEQ_LEN = MODEL_DEFAULTS['max_seq_len']
+    DEFAULT_METRIC = MODEL_DEFAULTS['metric']
+    DEFAULT_METRICS = MODEL_DEFAULTS['metrics']
+
+    # Instance fields with defaults from config.yml
     bert_model_name: str = './bert_encoder'
     num_classes: Optional[int] = None
     max_seq_len: int = MODEL_DEFAULTS['max_seq_len']
@@ -36,7 +47,7 @@ class ModelConfig(BaseConfig):
     metrics: List[str] = field(
         default_factory=lambda: MODEL_DEFAULTS['metrics']
     )
-    data_file: Path = Path("data/bbc-text.csv")
+    data_file: Path = Path(DATA_DEFAULTS['default_file'])
     n_trials: Optional[int] = field(default=100)
     n_experiments: int = 1
     trials_per_experiment: Optional[int] = field(default=None)
@@ -46,7 +57,6 @@ class ModelConfig(BaseConfig):
     # Remove default values for paths that should be under output_root
     model_save_path: Path = field(init=False)  # Will be set in post_init
     best_trials_dir: Path = field(init=False)
-    checkpoint_dir: Path = field(init=False)
     evaluation_dir: Path = field(init=False)
     logs_dir: Path = field(init=False)
     data_dir: Path = field(init=False)
@@ -83,9 +93,8 @@ class ModelConfig(BaseConfig):
                 model_paths = {'bert_encoder': MODEL_PATHS['bert_encoder']}
                 
             self.output_root = output_root
-            # Setup standard directories
+            # Setup standard directories (remove checkpoint_dir)
             self.best_trials_dir = output_root / dirs['best_trials']
-            self.checkpoint_dir = output_root / dirs['checkpoints']
             self.evaluation_dir = output_root / dirs['evaluation']
             self.logs_dir = output_root / dirs['logs']
             self.data_dir = output_root / dirs['data']
@@ -116,7 +125,6 @@ class ModelConfig(BaseConfig):
     def _init_default_directories(self):
         """Initialize directories with default values."""
         self.best_trials_dir = self.output_root / DIR_DEFAULTS['dirs']['best_trials']
-        self.checkpoint_dir = self.output_root / DIR_DEFAULTs['dirs']['checkpoints']
         self.evaluation_dir = self.output_root / DIR_DEFAULTS['dirs']['evaluation']
         self.logs_dir = self.output_root / DIR_DEFAULTS['dirs']['logs']
         self.data_dir = self.output_root / DIR_DEFAULTS['dirs']['data']
@@ -147,13 +155,13 @@ class ModelConfig(BaseConfig):
         """Add ModelConfig arguments to an ArgumentParser"""
         # Training settings
         training = parser.add_argument_group('Training Configuration')
-        training.add_argument('--num_epochs', type=int, default=cls.num_epochs, 
+        training.add_argument('--num_epochs', type=int, default=cls.DEFAULT_NUM_EPOCHS, 
                             help='Number of training epochs')
-        training.add_argument('--batch_size', type=int, default=cls.batch_size,
+        training.add_argument('--batch_size', type=int, default=cls.DEFAULT_BATCH_SIZE,
                             help='Training batch size')
-        training.add_argument('--learning_rate', type=float, default=cls.learning_rate,
+        training.add_argument('--learning_rate', type=float, default=cls.DEFAULT_LEARNING_RATE,
                             help='Learning rate')
-        training.add_argument('--hidden_dropout', type=float, default=cls.hidden_dropout,
+        training.add_argument('--hidden_dropout', type=float, default=cls.DEFAULT_HIDDEN_DROPOUT,
                             help='Hidden layer dropout rate')
 
         # Model settings
@@ -162,25 +170,25 @@ class ModelConfig(BaseConfig):
                           help='Name or path of the pre-trained BERT model')
         model.add_argument('--num_classes', type=int, default=cls.num_classes,
                           help='Number of output classes')
-        model.add_argument('--max_seq_len', type=int, default=cls.max_seq_len,  # Changed from max_length to max_seq_len
+        model.add_argument('--max_seq_len', type=int, default=cls.DEFAULT_MAX_SEQ_LEN,  # Changed from max_length to max_seq_len
                           help='Maximum sequence length for BERT tokenizer')
 
         # System settings
         system = parser.add_argument_group('System Configuration')
-        system.add_argument('--device', type=str, default=cls.device,
+        system.add_argument('--device', type=str, default=cls.DEFAULT_DEVICE,
                           choices=['cpu', 'cuda'], help='Device to use for training')
         system.add_argument('--n_trials', type=int, default=cls.n_trials,
                           help='Total number of trials (used when trials_per_experiment not set)')
         system.add_argument('--sampler', type=str, default=cls.sampler,
                           choices=['tpe', 'random', 'cmaes', 'qmc'],
                           help='Optuna sampler to use')
-        system.add_argument('--metric', type=str, default=cls.metric,
+        system.add_argument('--metric', type=str, default=cls.DEFAULT_METRIC,
                           choices=['f1', 'accuracy'],
                           help='Metric to use for model assessment')
 
         # File paths
         paths = parser.add_argument_group('File Paths')
-        paths.add_argument('--data_file', type=Path, default=cls.data_file,
+        paths.add_argument('--data_file', type=Path, default=cls.DEFAULT_DATA_FILE,
                           help='Path to input data file')
         # Remove default value for model_save_path, will be set based on output_root
         paths.add_argument('--model_save_path', type=Path,

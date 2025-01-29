@@ -2,7 +2,6 @@
 output_root: /Users/tod/BERT_TRAINING
 dirs:
   best_trials: best_trials
-  checkpoints: checkpoints
   evaluation: evaluation_results
   logs: logs
   data: data
@@ -11,6 +10,10 @@ dirs:
 # Model paths
 model_paths:
   bert_encoder: bert_encoder  # Path relative to output_root
+
+# Data paths
+data:
+  default_file: bbc-text.csv  # Just the filename, will be relative to data_dir
 
 # Model defaults
 model:
