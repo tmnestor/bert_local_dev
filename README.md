@@ -103,27 +103,8 @@ python -m src.tuning.optimize \
 python -m src.evaluation.evaluator \
     --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
     --best_model "/Users/tod/BERT_TRAINING/best_trials/bert_classifier.pth" \
-    --device cpu \
-    --max_seq_len 128
-
-python -m src.evaluation.evaluator \
-    --data_file "data/dataset.csv" \
-    --best_model "best_trials/best_model.pt" \
-    --output_dir "custom_evaluation_results" \
-    --metrics accuracy f1 precision recall \
-    --device cou \
-    --batch_size 64
-
-python -m src.evaluation.evaluator \
-    --data_file "data/dataset.csv" \
-    --best_model "best_trials/best_model.pt" \
-    --output_root /custom/output/path \
-    --bert_encoder_path /path/to/bert/encoder \
-    --output_dir "evaluation_results" \
-    --metrics accuracy f1 \
-    --device cuda \
-    --batch_size 32 \
-    --max_seq_len 128
+    --output_root "/Users/tod/BERT_TRAINING" \
+    --device cpu
 ```
 
 ## Data Format

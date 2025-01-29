@@ -215,7 +215,8 @@ class ModelEvaluator:
         })
         
         if save_predictions:
-            output_dir = output_dir or Path("evaluation_results")
+            # Use config's evaluation_dir instead of default path
+            output_dir = output_dir or self.config.evaluation_dir
             output_dir.mkdir(parents=True, exist_ok=True)
             
             results_df.to_csv(output_dir / 'test_predictions.csv', index=False)
@@ -275,42 +276,30 @@ class ModelEvaluator:
         model_args.add_argument('--batch_size', type=int, default=32,
                               help='Batch size for evaluation')
 
+# ...existing code...
+
 def main():
-    """Command-line interface entry point for model evaluation.
-    
-    Raises:
-        Exception: If evaluation fails.
-    """
+    """Command-line interface entry point for model evaluation."""
     parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
     
-    ModelConfig.add_argparse_args(parser)
-    
-    parser.add_argument('--best_model', type=Path, required=True,
-                       help='Path to best model checkpoint')
-    parser.add_argument('--output_dir', type=Path, default=Path('evaluation_results'),
-                       help='Directory to save evaluation results')
-    parser.add_argument('--metrics', nargs='+', type=str,
-                       default=ModelEvaluator.DEFAULT_METRICS,
-                       choices=ModelEvaluator.DEFAULT_METRICS,
-                       help='Metrics to compute')
+    # Use EvaluationConfig instead of ModelConfig to get proper directory handling
+    EvaluationConfig.add_argparse_args(parser)
     
     args = parser.parse_args()
     
-    config = ModelConfig.from_args(args)
-    
-    config.best_model = args.best_model
-    config.output_dir = args.output_dir
-    config.metrics = args.metrics
+    # Create EvaluationConfig instead of ModelConfig
+    config = EvaluationConfig.from_args(args)
     
     try:
         logger.info(f"Loading model from: {args.best_model}")
         evaluator = ModelEvaluator(
             model_path=args.best_model,
-            config=config
+            config=config  # Pass EvaluationConfig instance
         )
+        # Don't override output_dir here - let EvaluationConfig handle it
         metrics, _ = evaluator.evaluate(
             save_predictions=True,
-            output_dir=config.output_dir
+            output_dir=config.evaluation_dir  # Use evaluation_dir from config
         )
         logger.info("Evaluation completed successfully")
     except Exception as e:

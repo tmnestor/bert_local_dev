@@ -278,12 +278,19 @@ class ModelConfig(BaseConfig):
 @dataclass
 class ValidationConfig(ModelConfig):
     """Configuration for model validation."""
-    test_file: Optional[Path] = field(default=None)  # This can be None if using auto-split
-    output_dir: Path = field(default=Path("validation_results"))
-    model_path: Optional[Path] = field(default=None)  # Add this line
+    test_file: Optional[Path] = field(default=None)
+    output_dir: Path = field(init=False)  # Remove default value, will be set in post_init
+    model_path: Optional[Path] = field(default=None)
     threshold: float = 0.5
     metrics: List[str] = field(default_factory=lambda: ["accuracy", "f1", "precision", "recall"])
     save_predictions: bool = True
+    
+    def __post_init__(self):
+        """Initialize paths after parent initialization."""
+        # First call parent's initialization for directory setup
+        super().__post_init__()
+        # Then set output_dir to be under output_root/evaluation
+        self.output_dir = self.evaluation_dir
     
     DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
     
@@ -394,8 +401,16 @@ class ValidationConfig(ModelConfig):
 class EvaluationConfig(ModelConfig):
     """Configuration for model evaluation"""
     best_model: Path = field(default=None)
-    output_dir: Path = field(default=Path("evaluation_results"))
+    output_dir: Path = field(init=False)
     metrics: List[str] = field(default_factory=lambda: ["accuracy", "f1", "precision", "recall"])
+    
+    # Add class-level constant for default metrics
+    DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
+    
+    def __post_init__(self):
+        """Initialize paths after parent initialization."""
+        super().__post_init__()
+        self.output_dir = self.evaluation_dir
     
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -405,12 +420,12 @@ class EvaluationConfig(ModelConfig):
         eval_group = parser.add_argument_group('Evaluation')
         eval_group.add_argument('--best_model', type=Path, required=True,
                               help='Path to trained model checkpoint')
-        eval_group.add_argument('--output_dir', type=Path, 
-                              default=cls.output_dir,
+        eval_group.add_argument('--output_dir', type=Path,
                               help='Directory to save evaluation results')
+        # Fix metrics default value to use class constant
         eval_group.add_argument('--metrics', nargs='+', type=str,
-                              default=cls.metrics,
-                              choices=["accuracy", "f1", "precision", "recall"],
+                              default=cls.DEFAULT_METRICS,  # Use class constant
+                              choices=cls.DEFAULT_METRICS,
                               help='Metrics to compute')
 
     def validate(self) -> None:
