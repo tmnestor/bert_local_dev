@@ -1,33 +1,75 @@
 # BERT Text Classification Framework
 
-A production-grade framework for fine-tuning BERT models on text classification tasks, featuring automated optimization and comprehensive evaluation.
+A robust framework for BERT-based text classification with automated optimization, comprehensive evaluation, and flexible configuration management.
 
-## Purpose
+## Key Features
 
-This framework addresses three key challenges in BERT-based text classification:
+- **Robust Configuration System**: Multi-level configuration with validation and inheritance
+- **Advanced Optimization**: Optuna-based tuning with multiple sampling strategies
+- **Flexible Architecture**: Configurable classifier head with dynamic layer sizing
+- **Comprehensive Evaluation**: Multi-metric assessment and result analysis
+- **Production-Ready**: Error handling, logging, and progress tracking
 
-1. **Optimization Complexity** - Automated hyperparameter tuning using Optuna
-2. **Evaluation Rigor** - Comprehensive metrics and analysis tools
-3. **Architecture Flexibility** - Support for both standard and innovative classifier architectures
-
-## Structure
+## Project Structure
 
 ```
-src/
-├── config/          # Configuration management 
-├── models/          # Model architectures
-├── training/        # Training pipeline
-├── tuning/         # Hyperparameter optimization 
-├── evaluation/     # Evaluation tools
-├── data_utils/     # Data handling utilities
-└── utils/          # Common utilities
+src
+├── __init__.py
+├── config
+│   ├── __init__.py
+│   ├── base_config.py
+│   ├── config.py
+│   └── defaults.py
+├── data_utils
+│   ├── __init__.py
+│   ├── dataset.py
+│   ├── loaders.py
+│   ├── splitter.py
+│   └── validation.py
+├── evaluation
+│   └── evaluator.py
+├── models
+│   ├── __init__.py
+│   └── model.py
+├── training
+│   ├── __init__.py
+│   ├── train.py
+│   └── trainer.py
+├── tuning
+│   ├── __init__.py
+│   └── optimize.py
+└── utils
+    ├── data_splitter_old.py
+    ├── logging_manager.py
+    ├── metrics.py
+    ├── model_loading.py
+    └── train_utils.py
 ```
 
 Key Components:
-- **data_utils/**: Dataset management and validation
-- **models/**: BERT classifier implementations
-- **tuning/**: Optuna-based optimization
-- **evaluation/**: Metrics and analysis tools
+- **config/**: Manages configuration settings with validation and inheritance.
+  - `base_config.py`: Base configuration class.
+  - `config.py`: Handles model and training configurations.
+  - `defaults.py`: Contains default configuration values.
+- **data_utils/**: Handles data processing and management.
+  - `dataset.py`: PyTorch dataset implementation for text classification.
+  - `loaders.py`: Utilities for loading data.
+  - `splitter.py`: Manages data splitting into training, validation, and test sets.
+  - `validation.py`: Tools for data validation.
+- **models/**: Contains model architectures.
+  - `model.py`: Implements the BERT-based classifier.
+- **training/**: Manages the training pipeline.
+  - `train.py`: Script to initiate training.
+  - `trainer.py`: Implements the training loop and evaluation during training.
+- **tuning/**: Handles hyperparameter optimization using Optuna.
+  - `optimize.py`: Script to perform hyperparameter tuning.
+- **evaluation/**: Tools for evaluating model performance.
+  - `evaluator.py`: Implements model evaluation metrics and analysis.
+- **utils/**: Common utilities used across the project.
+  - `logging_manager.py`: Configures logging.
+  - `metrics.py`: Defines evaluation metrics.
+  - `model_loading.py`: Utilities for loading models.
+  - `train_utils.py`: Helper functions for training.
 
 ## Quick Usage
 
@@ -49,19 +91,6 @@ python -m src.training.train \
     --num_epochs 10 \
     --batch_size 32
 
-# python -m src.training.train \
-#     --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
-#     --bert_model_name "/Users/tod/BERT_TRAINING/bert_encoder" \
-#     --num_epochs 10 \
-#     --batch_size 32
-
-# # Usage with directories.yml configuration
-# python -m src.training.train \
-#     --data_file "/Users/tod/BERT_TRAINING/data/bbc-text.csv" \
-#     --output_root "/Users/tod/BERT_TRAINING" \
-#     --num_epochs 10 \
-#     --batch_size 32 \
-#     --device cpu
 ```
 
 ### 3. Optimize
@@ -74,28 +103,6 @@ python -m src.tuning.optimize \
     --batch_size 32 \
     --device cpu
 
-# python -m src.tuning.optimize \
-#     --data_file "data/dataset.csv" \
-#     --n_trials 100 \
-#     --n_experiments 3 \
-#     --study_name "bert_opt" \
-#     --sampler tpe \
-#     --metric f1 \
-#     --device cuda \
-#     --timeout 36000
-
-# python -m src.tuning.optimize \
-#     --data_file "data/dataset.csv" \
-#     --output_root /custom/output/path \
-#     --bert_encoder_path /path/to/bert/encoder \
-#     --n_trials 50 \
-#     --study_name "bert_opt" \
-#     --sampler tpe \
-#     --metric f1 \
-#     --device cuda \
-#     --batch_size 32 \
-#     --max_seq_len 128 \
-#     --seed 42
 ```
 
 ### 4. Evaluate
@@ -147,7 +154,6 @@ model:
   batch_size: 32
   num_epochs: 10
   learning_rate: 2e-5
-  # ...other model defaults...
 ```
 
 Configuration precedence:
@@ -175,50 +181,3 @@ search_space = {
     'hidden_dim': [128, 256, 512]
 }
 ```
-
-## Best Practices
-
-1. Data Preparation
-   - Clean and validate inputs
-   - Use stratified splits
-   - Check class balance
-
-2. Training
-   - Start with standard architecture
-   - Enable early stopping
-   - Monitor validation metrics
-
-3. Optimization
-   - Set reasonable trial budget
-   - Define informed parameter ranges
-   - Use TPE sampler
-
-4. Evaluation
-   - Check multiple metrics
-   - Analyze error patterns
-   - Save predictions for analysis
-
-## Troubleshooting
-
-1. Memory Issues:
-   ```python
-   config.batch_size = 16  # Reduce batch size
-   config.max_seq_len = 128  # Limit sequence length
-   ```
-
-2. Performance Issues:
-   ```python
-   config.learning_rate = 2e-5  # Adjust learning rate
-   config.num_epochs = 10  # Increase epochs
-   ```
-
-## Contributing
-
-1. Fork repository
-2. Create feature branch
-3. Add tests
-4. Submit pull request
-
-## License
-
-MIT License - See LICENSE file

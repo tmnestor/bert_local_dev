@@ -1,8 +1,9 @@
 """Default configuration values."""
-import torch
 import os
-import yaml
 from pathlib import Path
+
+import yaml
+
 
 def load_config(config_path: Path = None) -> dict:
     """Load configuration from YAML file."""
@@ -10,14 +11,13 @@ def load_config(config_path: Path = None) -> dict:
         # Try project root first, then environment variable
         config_paths = [
             Path.cwd() / 'config.yml',
-            Path.cwd() / 'directories.yml',  # Backward compatibility
             Path(os.environ.get('BERT_CONFIG', 'config/config.yml'))
         ]
         config_path = next((p for p in config_paths if p.exists()), None)
         if not config_path:
             raise FileNotFoundError("No configuration file found")
     
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     # Convert paths to Path objects

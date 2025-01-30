@@ -428,16 +428,17 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
                 
                 # Handle pruning
                 should_prune = False
+                reason = ""
                 if epoch >= min_epochs:
                     if trial.should_prune():
                         should_prune = True
                         reason = "Optuna pruning triggered"
                     elif no_improve_count >= patience:
                         should_prune = True
-                        reason = f"No improvement for {patience} epochs"
+                        reason = "No improvement for %d epochs" % patience
                     
                 if should_prune:
-                    logger.info(f"\nPruning trial {trial.number} at epoch {epoch}: {reason}")
+                    logger.info("\nPruning trial %d at epoch %d: %s", trial.number, epoch, reason)
                     logger.info(f"Final trial score: {trial_best_score:.4f}")
                     raise optuna.TrialPruned(reason)
                     
