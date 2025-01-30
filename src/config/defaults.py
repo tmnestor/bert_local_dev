@@ -11,7 +11,7 @@ def load_config(config_path: Path = None) -> dict:
         # Try project root first, then environment variable
         config_paths = [
             Path.cwd() / 'config.yml',
-            Path(os.environ.get('BERT_CONFIG', 'config/config.yml'))
+            # Path(os.environ.get('BERT_CONFIG', 'config/config.yml'))
         ]
         config_path = next((p for p in config_paths if p.exists()), None)
         if not config_path:
