@@ -48,17 +48,20 @@ MODEL_PATHS = CONFIG['model_paths']
 
 MODEL_DEFAULTS = CONFIG['model']
 
-CLASSIFIER_DEFAULTS = CONFIG['classifier']
+# Update CLASSIFIER_DEFAULTS to remove 'standard' nesting
+CLASSIFIER_DEFAULTS = {
+    'hidden_dim': [256, 218],
+    'dropout_rate': 0.1
+}
 
-# Optimization search space remains hardcoded for now
+# Update OPTIM_SEARCH_SPACE to use dynamic hidden dimensions
 OPTIM_SEARCH_SPACE = {
     'batch_size': [16, 32, 64],
-    'num_layers': (1, 4),
-    'hidden_dim': [32, 64, 128, 256, 512, 1024],
-    'activation': ['relu', 'gelu', 'elu', 'leaky_relu', 'selu', 
-                  'mish', 'swish', 'hardswish', 'tanh', 'prelu'], 
+    'num_hidden_layers': (1, 4),  # Now controlling number of layers directly
     'dropout_rate': (0.1, 0.5),
     'learning_rate': (1e-5, 1e-3),  # log scale
     'weight_decay': (1e-8, 1e-3),   # log scale
     'warmup_ratio': (0.0, 0.2)
 }
+
+# Remove hidden_dims from search space since it's now dynamically generated

@@ -16,7 +16,10 @@ from ..data_utils import (
 )
 from ..utils.train_utils import initialize_progress_bars, save_model_state
 from ..utils.logging_manager import setup_logger
-from ..config.defaults import CLASSIFIER_DEFAULTS
+from ..config.defaults import (
+    CLASSIFIER_DEFAULTS,
+    MODEL_DEFAULTS  # Add this import
+)
 from ..tuning.optimize import create_optimizer  # Update this import
 
 logger = setup_logger(__name__)
@@ -83,25 +86,20 @@ def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> Op
 def train_model(model_config: ModelConfig, clf_config: dict = None):
     """Train a model with fixed or optimized configuration"""
     if clf_config is None:
-        # Use default configuration
-        clf_config = CLASSIFIER_DEFAULTS['standard'].copy()
+        # Use default configuration without 'standard' nesting
+        clf_config = CLASSIFIER_DEFAULTS.copy()
         clf_config.update({
             'learning_rate': model_config.learning_rate,
             'batch_size': model_config.batch_size
         })
-        
+    
     if clf_config is None:
         logger.info("Using default configuration")
         clf_config = {
-            'architecture_type': 'standard',
-            'num_layers': 2,
-            'hidden_dim': 256,
+            'hidden_dim': [256, 218],
             'learning_rate': model_config.learning_rate,
             'weight_decay': 0.01,
-            'activation': 'gelu',
-            'regularization': 'dropout',
             'dropout_rate': 0.1,
-            'cls_pooling': True,
             'batch_size': model_config.batch_size
         }
     
@@ -174,7 +172,8 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
                         'epoch': epoch,
                         'optimizer_state': optimizer.state_dict(),
                         'classifier_config': clf_config,
-                        'num_classes': model_config.num_classes
+                        'num_classes': model_config.num_classes,
+                        'bert_hidden_size': MODEL_DEFAULTS['bert_hidden_size']  # Now MODEL_DEFAULTS is defined
                     }
                 )
                 logger.info("\nSaved new best model with %s=%.4f", model_config.metric, score)

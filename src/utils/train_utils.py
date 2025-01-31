@@ -18,29 +18,25 @@ def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm
     return trial_pbar, epoch_pbar
 
 def save_model_state(
-    model_state: Dict[str, Any],
-    save_path: Path,
-    metric_value: float,
-    config: Dict[str, Any]
+    state_dict: dict,
+    path: Path,
+    score: float,
+    metadata: dict
 ) -> None:
-    """Save model checkpoint with metadata.
-
-    Args:
-        model_state: Model state dict.
-        save_path: Path to save checkpoint.
-        metric_value: Performance metric value.
-        config: Model configuration dict.
-
-    Raises:
-        IOError: If saving fails.
-    """
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        'model_state_dict': model_state,
-        'config': config,
-        'metric_value': metric_value,
-        'num_classes': config['num_classes']
-    }, save_path)
+    """Save model state with complete configuration."""
+    save_dict = {
+        'model_state_dict': state_dict,
+        'config': {
+            'classifier_config': metadata['classifier_config'],
+            'model_config': {
+                'bert_hidden_size': metadata.get('bert_hidden_size', 384),  # Default if not provided
+                'num_classes': metadata['num_classes']
+            }
+        },
+        'metric_value': score,
+        **{k: v for k, v in metadata.items() if k not in ['classifier_config', 'num_classes']}
+    }
+    torch.save(save_dict, path)
 
 def log_separator(logger_instance: logging.Logger) -> None:
     logger_instance.info("\n" + "="*80)

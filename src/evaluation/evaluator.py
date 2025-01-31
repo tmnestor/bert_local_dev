@@ -13,6 +13,7 @@ from ..utils.metrics import calculate_metrics
 from ..data_utils import load_and_preprocess_data, create_dataloaders  # Changed import
 from ..utils.logging_manager import setup_logger
 from ..utils.model_loading import safe_load_checkpoint, verify_state_dict
+from ..config.defaults import MODEL_DEFAULTS  # Add this import
 
 logger = setup_logger(__name__)
 
@@ -45,6 +46,20 @@ class ModelEvaluator:
         self.metrics = getattr(config, 'metrics', self.DEFAULT_METRICS)
         self.model = self._load_model()
         
+    def _calculate_layer_sizes(self, input_size: int, hidden_dims: List[int], num_classes: int) -> List[int]:
+        """Calculate the layer sizes from input through hidden layers to output.
+        
+        Args:
+            input_size: Size of input layer (BERT hidden size)
+            hidden_dims: List of hidden layer dimensions
+            num_classes: Number of output classes
+            
+        Returns:
+            List of layer sizes including input and output
+        """
+        # Simple concatenation of input size, hidden dims, and output size
+        return [input_size] + hidden_dims + [num_classes]
+
     def _load_model(self) -> BERTClassifier:
         """Load model from checkpoint."""
         try:
@@ -56,10 +71,15 @@ class ModelEvaluator:
             )
             classifier_config = checkpoint['config']['classifier_config']
             
-            # Create model instance
+            # Get model configuration from checkpoint
+            model_config = checkpoint['config'].get('model_config', {})
+            bert_hidden_size = model_config.get('bert_hidden_size', MODEL_DEFAULTS['bert_hidden_size'])
+            num_classes = model_config.get('num_classes', self.config.num_classes)
+            
+            # Create model instance with proper configuration
             model = BERTClassifier(
                 self.config.bert_model_name,
-                checkpoint.get('num_classes', self.config.num_classes),
+                num_classes,
                 classifier_config
             )
             
@@ -83,36 +103,21 @@ class ModelEvaluator:
             logger.info("Best Optimization Score: %.4f", checkpoint.get('metric_value', float('nan')))
             logger.info("Validation Split Size: %s", checkpoint.get('val_size', 'N/A'))
             
-            arch_type = classifier_config.get('architecture_type', 'standard')
             logger.info("\nArchitecture Configuration:")
-            logger.info("Type: %s", arch_type)
+            logger.info("Hidden Dimensions: %s", classifier_config.get('hidden_dim', []))
             logger.info("Learning Rate: %.6f", classifier_config.get('learning_rate', 0.0))
             logger.info("Weight Decay: %.6f", classifier_config.get('weight_decay', 0.0))
+            logger.info("Dropout Rate: %.4f", classifier_config.get('dropout_rate', 0.1))
             
-            if arch_type == 'standard':
-                bert_hidden_size = self.config.bert_model_name.config.hidden_size if hasattr(self.config.bert_model_name, 'config') else 768
-                layer_sizes = self._calculate_layer_sizes(
-                    bert_hidden_size,
-                    classifier_config.get('hidden_dim'),
-                    classifier_config.get('num_layers'),
-                    checkpoint.get('num_classes', self.config.num_classes)
-                )
-                hidden_layers = layer_sizes[1:-1]
-
-                logger.info("\nStandard Classifier Configuration:")
-                logger.info("Number of Layers: %d", classifier_config.get('num_layers', 'N/A'))
-                logger.info("Hidden Layer Sizes: %s", hidden_layers)
-                logger.info("Activation: %s", classifier_config.get('activation', 'N/A'))
-                logger.info("Dropout Rate: %.4f", classifier_config.get('dropout_rate', 'N/A'))
-                logger.info("Warmup Ratio: %.3f", classifier_config.get('warmup_ratio', 0.0))
-                logger.info("Pooling: Mean pooling with L2 normalization")
-            else:
-                logger.info("\nPlaneResNet Configuration:")
-                logger.info("Number of Planes: %d", classifier_config.get('num_planes', 'N/A'))
-                logger.info("Plane Width: %d", classifier_config.get('plane_width', 'N/A'))
-                logger.info("Regularization: BatchNorm")
-                logger.info("Warmup Ratio: %.3f", classifier_config.get('warmup_ratio', 0.0))
-
+            # Use correct BERT hidden size from saved config
+            layer_sizes = self._calculate_layer_sizes(
+                bert_hidden_size,
+                classifier_config.get('hidden_dim', [256, 218]),
+                num_classes
+            )
+            hidden_layers = layer_sizes[1:-1]
+            logger.info("Layer Sizes: %s", layer_sizes)
+            
             if 'hyperparameters' in checkpoint:
                 logger.info("\nTrial Hyperparameters:")
                 for key, value in checkpoint['hyperparameters'].items():
@@ -122,26 +127,6 @@ class ModelEvaluator:
             
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}") from e
-
-    def _calculate_layer_sizes(self, input_size: int, hidden_dim: int, num_layers: int, num_classes: int) -> List[int]:
-        """Calculate the actual sizes of all layers."""
-        if num_layers == 1:
-            return [input_size, num_classes]
-        
-        layer_sizes = [input_size]
-        current_size = input_size
-        
-        if num_layers > 2:
-            ratio = (hidden_dim / current_size) ** (1.0 / (num_layers - 1))
-            for _ in range(num_layers - 1):
-                current_size = int(current_size * ratio)
-                current_size = max(current_size, hidden_dim)
-                layer_sizes.append(current_size)
-        else:
-            layer_sizes.append(hidden_dim)
-        
-        layer_sizes.append(num_classes)
-        return layer_sizes
     
     def evaluate(self, 
                 save_predictions: bool = True,

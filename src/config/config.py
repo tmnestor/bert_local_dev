@@ -466,3 +466,21 @@ class EvaluationConfig(ModelConfig):
         if not self.best_model.exists():
             raise FileNotFoundError(f"Model file not found: {self.best_model}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+def load_best_configuration(best_trials_dir: Path, study_name: str = None) -> Optional[dict]:
+    """Load best model configuration from optimization results"""
+    # ...existing code...
+    
+    if best_trial:
+        _log_best_configuration(best_file, best_value)
+        # Return the actual configuration without architecture type checks
+        if 'params' in best_trial:
+            config = best_trial['params']
+            # Add default values for missing configuration keys
+            config.update({
+                'hidden_dim': config.get('hidden_dim', [256, 218]),
+                'dropout_rate': config.get('dropout_rate', 0.1),
+            })
+            return config
+
+# ...existing code...

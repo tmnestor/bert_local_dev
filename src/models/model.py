@@ -34,24 +34,16 @@ class BERTClassifier(nn.Module):
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
         """Validates the classifier configuration."""
-        required_keys = ['num_layers', 'hidden_dim', 'activation', 'dropout_rate']
-        if not all(key in config for key in required_keys):
-            raise ValueError(f"Missing required keys in classifier_config. Required: {required_keys}")
-        
-        if not isinstance(config['num_layers'], int) or config['num_layers'] < 1:
-            raise ValueError("num_layers must be a positive integer")
-        
-        if not isinstance(config['hidden_dim'], int) or config['hidden_dim'] < 1:
-            raise ValueError("hidden_dim must be a positive integer")
-        
-        valid_activations = [
-            'relu', 'leaky_relu', 'elu', 'gelu', 'selu', 
-            'mish', 'swish', 'hardswish', 'tanh', 'prelu'
-        ]
-        if config['activation'] not in valid_activations:
-            raise ValueError(f"activation must be one of {valid_activations}")
-        
-        if not isinstance(config['dropout_rate'], float) or not 0 <= config['dropout_rate'] <= 1:
+        if 'hidden_dim' not in config:
+            raise ValueError("hidden_dim is required in classifier_config")
+            
+        if not isinstance(config['hidden_dim'], (list, tuple)):
+            raise ValueError("hidden_dim must be a list or tuple of integers")
+            
+        if not all(isinstance(dim, int) and dim > 0 for dim in config['hidden_dim']):
+            raise ValueError("all hidden_dim values must be positive integers")
+            
+        if not isinstance(config.get('dropout_rate', 0.1), float) or not 0 <= config['dropout_rate'] <= 1:
             raise ValueError("dropout_rate must be a float between 0 and 1")
 
     def _get_regularization(self, size: int, dropout_rate: float = 0.1) -> nn.Module:
@@ -59,24 +51,24 @@ class BERTClassifier(nn.Module):
         return nn.Dropout(dropout_rate)
 
     def _build_classifier(self, input_size: int, num_classes: int) -> nn.Module:
-        layer_sizes = self._calculate_layer_sizes(input_size, self.classifier_config['hidden_dim'], self.classifier_config['num_layers'], num_classes)
+        """Build classifier layers based on configuration."""
+        hidden_dims = self.classifier_config['hidden_dim']
+        dropout_rate = self.classifier_config.get('dropout_rate', 0.1)
         
-        logger.info("\nBuilding standard classifier:")
-        logger.info("  Input size: %s", layer_sizes[0])
-        logger.info("  Hidden layers: %s", len(layer_sizes) - 2)
-        logger.info("  Hidden dimension: %s", self.classifier_config['hidden_dim'])
-        logger.info("  Activation: %s", self.classifier_config['activation'])
-        logger.info("  Regularization: Dropout (rate: %s)", self.classifier_config['dropout_rate'])
+        logger.info("\nBuilding classifier:")
+        logger.info("  Input size: %s", input_size)
+        logger.info("  Hidden dimensions: %s", hidden_dims)
+        logger.info("  Output classes: %s", num_classes)
+        logger.info("  Dropout rate: %s", dropout_rate)
         
         layers = []
+        layer_sizes = [input_size] + hidden_dims + [num_classes]
+        
         for i in range(len(layer_sizes) - 1):
-            current_size = layer_sizes[i]
-            next_size = layer_sizes[i + 1]
-            
-            layers.append(nn.Linear(current_size, next_size))
-            if i < len(layer_sizes) - 2:  # Hidden layer
-                layers.append(self._get_activation(self.classifier_config['activation']))
-                layers.append(self._get_regularization(next_size, self.classifier_config['dropout_rate']))
+            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 2:  # Not the last layer
+                layers.append(nn.ReLU())  # Using ReLU as default activation
+                layers.append(nn.Dropout(dropout_rate))
         
         return nn.Sequential(*layers)
 

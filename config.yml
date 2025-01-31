@@ -25,13 +25,9 @@ model:
   device: cpu
   metric: f1
   metrics: ["accuracy", "f1", "precision", "recall"]
+  bert_hidden_size: 384  # Added BERT hidden size
+  num_classes: 5  # Added number of classes
 
 # Classifier architecture defaults
 classifier:
-  standard:
-    num_layers: 2
-    hidden_dim: 256
-    activation: gelu
-    dropout_rate: 0.1
-    weight_decay: 0.01
-    warmup_ratio: 0.1
+  hidden_dim: [256, 218]

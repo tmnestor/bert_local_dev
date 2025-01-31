@@ -4,7 +4,7 @@ import time
 import warnings
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Iterator
+from typing import Dict, List, Optional, Any, Iterator, Tuple
 
 import optuna
 import torch
@@ -28,6 +28,7 @@ from ..utils.train_utils import (
     log_separator
 )
 from ..utils.logging_manager import setup_logger
+from ..config.defaults import MODEL_DEFAULTS  # Add this import
 
 # Silence specific Optuna warnings
 warnings.filterwarnings('ignore', category=ExperimentalWarning)
@@ -255,7 +256,10 @@ def save_best_trial(best_model_info: Dict[str, Any], trial_study_name: str, mode
             'model_state_dict': best_model_info['model_state'],
             'config': {
                 'classifier_config': best_model_info['config'],
-                'epoch': -1,
+                'model_config': {
+                    'bert_hidden_size': MODEL_DEFAULTS['bert_hidden_size'],
+                    'num_classes': model_config.num_classes
+                }
             },
             'metric_value': best_model_info[metric_key],  # Verify this value
             'study_name': trial_study_name,
@@ -291,17 +295,53 @@ def setup_training_components(model_config, classifier_config, optimizer_name, o
     
     return model, trainer, optimizer, scheduler
 
-def get_trial_config(trial):
+def calculate_hidden_sizes(bert_hidden_size: int, num_classes: int, num_layers: int) -> List[int]:
+    """Calculate hidden layer sizes that decrease geometrically from BERT size to near num_classes.
+    
+    Args:
+        bert_hidden_size: Size of BERT hidden layer
+        num_classes: Number of output classes
+        num_layers: Number of hidden layers to generate
+        
+    Returns:
+        List of hidden layer sizes
+    """
+    if num_layers == 0:
+        return []
+    
+    # Start with double BERT size and decrease geometrically
+    start_size = 2 * bert_hidden_size
+    min_size = max(num_classes * 2, 64)  # Don't go smaller than this
+    
+    # Calculate ratio for geometric decrease
+    ratio = (min_size / start_size) ** (1.0 / (num_layers + 1))
+    
+    sizes = []
+    current_size = start_size
+    for _ in range(num_layers):
+        current_size = int(current_size * ratio)
+        # Round to nearest even number and ensure minimum size
+        current_size = max(min_size, 2 * (current_size // 2))
+        sizes.append(current_size)
+    
+    return sizes
+
+def get_trial_config(trial: optuna.Trial, model_config: ModelConfig) -> Tuple[int, Dict, str, Dict]:
     """Get trial configuration parameters."""
     batch_size = trial.suggest_categorical('batch_size', [16, 32, 64, 128, 256])
     
+    # Get number of hidden layers
+    num_hidden_layers = trial.suggest_int('num_hidden_layers', 1, 4)
+    
+    # Calculate hidden dimensions based on BERT size and number of classes
+    hidden_dims = calculate_hidden_sizes(
+        bert_hidden_size=MODEL_DEFAULTS['bert_hidden_size'],
+        num_classes=model_config.num_classes,  # Use from model_config instead
+        num_layers=num_hidden_layers
+    )
+    
     classifier_config = {
-        'num_layers': trial.suggest_int('num_layers', 1, 6),
-        'hidden_dim': trial.suggest_categorical('hidden_dim', [64, 128, 256, 512, 1024, 2048]),
-        'activation': trial.suggest_categorical('activation', [
-            'relu', 'gelu', 'elu', 'leaky_relu', 'selu',
-            'mish', 'swish', 'hardswish', 'tanh', 'prelu'
-        ]),
+        'hidden_dim': hidden_dims,
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.6),
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True),
         'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.3)
@@ -353,7 +393,9 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
     """Optimization objective function for a single trial."""
     try:
         # Get trial configuration
-        batch_size, classifier_config, optimizer_name, optimizer_config = get_trial_config(trial)
+        batch_size, classifier_config, optimizer_name, optimizer_config = get_trial_config(
+            trial, model_config
+        )
         
         # Create train/val split
         train_texts, val_texts, train_labels, val_labels = train_test_split(
