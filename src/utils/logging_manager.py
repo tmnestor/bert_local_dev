@@ -1,11 +1,7 @@
 import logging
 import logging.config
-import os
-from datetime import datetime
-from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-import yaml
 
 if TYPE_CHECKING:
     from ..config.config import ModelConfig

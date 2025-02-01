@@ -1,5 +1,4 @@
-import logging
-from typing import Tuple, Optional, Literal
+from typing import Tuple, Optional
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -16,7 +15,6 @@ logger = get_logger(__name__)  # Changed to get_logger
 
 class TrainerError(Exception):
     """Custom exception for Trainer errors."""
-    pass
 
 class Trainer:
     """Handles model training and evaluation.
@@ -158,7 +156,7 @@ class Trainer:
                 'optimizer_state_dict': optimizer.state_dict(),
             }
             torch.save(checkpoint, path)
-            logger.info(f"Saved checkpoint to {path}")
+            logger.info("Saved checkpoint to %s", path)
         except Exception as e:
             raise TrainerError(f"Error saving checkpoint: {str(e)}") from e
 
@@ -180,7 +178,7 @@ class Trainer:
             self.model.load_state_dict(checkpoint['model_state_dict'])
             if optimizer is not None:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            logger.info(f"Loaded checkpoint from {path}")
+            logger.info("Loaded checkpoint from %s", path)
             return checkpoint['epoch']
         except Exception as e:
             raise TrainerError(f"Error loading checkpoint: {str(e)}") from e

@@ -1,14 +1,11 @@
-import json
-import joblib
 import logging
 from pathlib import Path
-from typing import List, Optional, NamedTuple, Tuple
+from typing import List, Optional
 from dataclasses import dataclass
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-import numpy as np
 
 from ..utils.logging_manager import get_logger  # Changed from setup_logger
 
@@ -133,7 +130,7 @@ class DataSplitter:
         val_data.to_csv(self.split_dir / "val.csv", index=False)
         test_data.to_csv(self.split_dir / "test.csv", index=False)
         
-        self.logger.info(f"Created splits: {len(train_data)} train, {len(val_data)} val, {len(test_data)} test")
+        self.logger.info("Created splits: %d train, %d val, %d test", len(train_data), len(val_data), len(test_data))
         
         return DataSplit(
             train_texts=train_data['text'].tolist(),

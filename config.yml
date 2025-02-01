@@ -5,7 +5,6 @@ dirs:
   evaluation: evaluation_results
   logs: logs
   data: data
-  models: models
 
 # Model paths
 model_paths:
@@ -20,14 +19,29 @@ model:
   max_seq_len: 64
   batch_size: 32
   num_epochs: 10
-  learning_rate: 2e-5
-  hidden_dropout: 0.1
   device: cpu
   metric: f1
   metrics: ["accuracy", "f1", "precision", "recall"]
-  bert_hidden_size: 384  # Added BERT hidden size
-  num_classes: 5  # Added number of classes
 
 # Classifier architecture defaults
 classifier:
-  hidden_dim: [256, 218]
+  bert_hidden_size: 384
+  hidden_dims: [412, 220, 118]  # These will be the hidden layer sizes
+  dropout_rate: 0.3499496966142211
+  activation: gelu
+  num_classes: 5
+
+# Optimizer configuration
+optimizer: 
+  optimizer_choice: adamw  # One of: rmsprop, sgd, adamw
+  lr: 0.0030733180101378092
+  weight_decay: 0.005849785104191507
+  warmup_ratio: 0.16512063874129088
+  # RMSprop specific
+  momentum: 0.367  # Used by both RMSprop and SGD
+  alpha: 0.864    # RMSprop only
+  # SGD specific
+  nesterov: true  # SGD only
+  # AdamW specific
+  betas: (0.6556849067584876, 0.9989954180359887)      # AdamW only
+  eps: 2.9849547332547365e-07       # AdamW only
