@@ -1,21 +1,38 @@
 import logging
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 import torch
 from tqdm.auto import tqdm
 
-from ..utils.logging_manager import setup_logger
+from ..utils.logging_manager import get_logger  # Change from setup_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)  # Change to get_logger
 
-def initialize_progress_bars(n_trials: int, num_epochs: int) -> Tuple[tqdm, tqdm]:
+def initialize_progress_bars(n_trials: int, num_batches: int = None) -> Tuple[tqdm, Optional[tqdm]]:
     """Initialize progress bars for training/tuning."""
-    # Add line break before progress bars
-    print("\n", flush=True)  # Force line break and flush output
-    trial_pbar = tqdm(total=n_trials, desc='Trials', position=0)
-    epoch_pbar = tqdm(total=num_epochs, desc='Epochs', position=1, leave=False)
-    return trial_pbar, epoch_pbar
+    print("", flush=True)  # Force line break
+    epoch_pbar = tqdm(
+        total=n_trials, 
+        desc='Epoch 1/5',
+        position=0,
+        leave=True,
+        ncols=80,
+        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}'
+    )
+    
+    batch_pbar = None
+    if num_batches:
+        batch_pbar = tqdm(
+            total=num_batches,
+            desc='Training',
+            position=1,
+            leave=False,
+            ncols=80,
+            bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{postfix}]'
+        )
+    
+    return epoch_pbar, batch_pbar
 
 def save_model_state(
     state_dict: dict,

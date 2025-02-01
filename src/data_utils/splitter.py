@@ -2,16 +2,24 @@ import json
 import joblib
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, NamedTuple, Tuple
 from dataclasses import dataclass
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+import numpy as np
 
-from ..utils.logging_manager import setup_logger
+from ..utils.logging_manager import get_logger  # Changed from setup_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)  # Changed to get_logger
+
+def preprocess_text(text: str) -> str:
+    """Clean and normalize text."""
+    if not isinstance(text, str):
+        return ""
+    text = text.lower().strip()
+    return " ".join(text.split())  # Normalize whitespace
 
 @dataclass
 class DataSplit:

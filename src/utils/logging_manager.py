@@ -1,57 +1,41 @@
 import logging
-import sys
+import logging.config
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
+import yaml
+
 if TYPE_CHECKING:
     from ..config.config import ModelConfig
 
-def setup_logger(name: str, config: Optional["ModelConfig"] = None) -> logging.Logger:
-    """Setup logger using configuration directory paths.
-
-    Args:
-        name: Logger name (typically __name__)
-        config: ModelConfig instance. If provided, uses its logs_dir for file output.
-               If None, only console output is setup.
-
-    Returns:
-        logging.Logger: Configured logger instance
-    """
-    logger = logging.getLogger(name)
-    if logger.hasHandlers():
-        return logger
+def setup_logging(config: "ModelConfig") -> None:
+    """Initialize logging configuration."""
+    # Map verbosity levels to logging levels
+    log_levels = {
+        0: logging.WARNING,  # Minimal output
+        1: logging.INFO,     # Normal operation
+        2: logging.DEBUG     # Debug output
+    }
     
-    logger.setLevel(logging.INFO)
+    log_level = log_levels.get(config.verbosity, logging.INFO)
     
-    # Console formatter - Fix typo in levelname
-    console_formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s'  # Changed from levellevel to levelname
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format='%(message)s',  # Simplified format for evaluation output
+        force=True  # Override any existing configuration
     )
     
-    # Always add console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+    # Set level for specific loggers
+    logging.getLogger('transformers').setLevel(logging.WARNING)
+    logging.getLogger('torch').setLevel(logging.WARNING)
     
-    # Only add file handler if config with logs_dir is provided
-    if config is not None and hasattr(config, 'logs_dir'):
-        # File formatter with more details
-        file_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        
-        # Setup file handler with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_file = config.logs_dir / f'bert_classifier_{timestamp}.log'
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
-        
-        logger.info(f"Logging to: {log_file}")
-    
-    return logger
+    # Only show TQDM output for verbosity > 0
+    if config.verbosity == 0:
+        logging.getLogger('tqdm').setLevel(logging.WARNING)
 
-# Remove global logger - each module should instantiate its own
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger with the specified name."""
+    return logging.getLogger(name)

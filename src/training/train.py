@@ -15,14 +15,14 @@ from ..data_utils import (
     TextClassificationDataset
 )
 from ..utils.train_utils import initialize_progress_bars, save_model_state
-from ..utils.logging_manager import setup_logger
+from ..utils.logging_manager import get_logger, setup_logging  # Add setup_logging import
 from ..config.defaults import (
     CLASSIFIER_DEFAULTS,
     MODEL_DEFAULTS  # Add this import
 )
 from ..tuning.optimize import create_optimizer  # Update this import
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)  # Change to get_logger
 
 def _log_best_configuration(best_file: Path, best_value: float) -> None:
     """Log information about the best configuration"""
@@ -93,21 +93,16 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
             'batch_size': model_config.batch_size
         })
     
-    if clf_config is None:
-        logger.info("Using default configuration")
-        clf_config = {
-            'hidden_dim': [256, 218],
-            'learning_rate': model_config.learning_rate,
-            'weight_decay': 0.01,
-            'dropout_rate': 0.1,
-            'batch_size': model_config.batch_size
-        }
-    
-    # Load and preprocess data using utility function with train/val split
+    # Load data and set num_classes
     train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
-    logger.info("Loaded %d training and %d validation samples", 
-                len(train_texts), len(val_texts))
-
+    
+    # Set num_classes based on label encoder if not already set
+    if model_config.num_classes is None:
+        model_config.num_classes = len(label_encoder.classes_)
+        
+    logger.info("Loaded %d training and %d validation samples (%d classes)", 
+                len(train_texts), len(val_texts), model_config.num_classes)
+    
     # Create dataloaders using utility function
     train_dataloader, val_dataloader = create_dataloaders(
         [train_texts, val_texts], 
@@ -144,16 +139,20 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
     )
     
     # Initialize progress bars using utility function
-    epoch_pbar, batch_pbar = initialize_progress_bars(model_config.num_epochs, len(train_dataloader))
+    epoch_pbar, batch_pbar = initialize_progress_bars(
+        model_config.num_epochs, 
+        len(train_dataloader)  # Pass batch count for batch progress bar
+    )
     
     # Training loop
     best_score = 0.0
+    
     try:
         for epoch in range(model_config.num_epochs):
             epoch_pbar.set_description(f"Epoch {epoch+1}/{model_config.num_epochs}")
             
             loss = trainer.train_epoch(train_dataloader, optimizer, scheduler, batch_pbar)
-            score, _ = trainer.evaluate(val_dataloader)
+            score, metrics = trainer.evaluate(val_dataloader)
             
             epoch_pbar.set_postfix({
                 'loss': f'{loss:.4f}',
@@ -163,24 +162,42 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
             
             if score > best_score:
                 best_score = score
-                # Save model when new best score is achieved
-                save_model_state(
-                    model.state_dict(),
-                    model_config.model_save_path,  # This is "best_trials/bert_classifier.pth"
-                    score,
-                    {
-                        'epoch': epoch,
-                        'optimizer_state': optimizer.state_dict(),
-                        'classifier_config': clf_config,
-                        'num_classes': model_config.num_classes,
-                        'bert_hidden_size': MODEL_DEFAULTS['bert_hidden_size']  # Now MODEL_DEFAULTS is defined
-                    }
-                )
+                # Create state dictionary exactly like optimize.py does
+                best_state = {
+                    'model_state': model.state_dict(),
+                    'config': clf_config.copy(),
+                    f'{model_config.metric}_score': score,
+                    'trial_number': None,
+                    'params': clf_config.copy(),  # Use same config as params
+                    'epoch': epoch,
+                    'metrics': metrics
+                }
+
+                # Save using exact same format as optimize.py
+                save_dict = {
+                    'model_state_dict': best_state['model_state'],  # Use model_state_dict key
+                    'config': {
+                        'classifier_config': best_state['config'],  # Nest config properly
+                        'model_config': {
+                            'bert_hidden_size': MODEL_DEFAULTS['bert_hidden_size'],
+                            'num_classes': model_config.num_classes
+                        }
+                    },
+                    'metric_value': score,
+                    'study_name': 'training',
+                    'trial_number': None,
+                    'num_classes': model_config.num_classes,
+                    'hyperparameters': clf_config,
+                    'val_size': 0.2,
+                    'metric': model_config.metric
+                }
+                torch.save(save_dict, model_config.model_save_path)
                 logger.info("\nSaved new best model with %s=%.4f", model_config.metric, score)
     
     finally:
         epoch_pbar.close()
-        batch_pbar.close()
+        if batch_pbar is not None:  # Only close batch_pbar if it exists
+            batch_pbar.close()
         
     logger.info("\nTraining completed. Best %s: %.4f", model_config.metric, best_score)
 
@@ -207,9 +224,10 @@ def parse_args() -> argparse.Namespace:
     return args
 
 if __name__ == "__main__":
-    # Remove logging.basicConfig as it's handled by logging_manager
     args = parse_args()
     config = ModelConfig.from_args(args)
+    setup_logging(config)  # Initialize logging configuration first
+
     
     # Only create classifier_config if architecture is explicitly specified
     if args.architecture:

@@ -27,13 +27,13 @@ from ..utils.train_utils import (
     initialize_progress_bars,
     log_separator
 )
-from ..utils.logging_manager import setup_logger
+from ..utils.logging_manager import get_logger, setup_logging  # Change from setup_logger
 from ..config.defaults import MODEL_DEFAULTS  # Add this import
 
 # Silence specific Optuna warnings
 warnings.filterwarnings('ignore', category=ExperimentalWarning)
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)  # Change to get_logger
 
 def create_optimizer(
     optimizer_name: str,
@@ -93,17 +93,10 @@ def create_optimizer(
 
 def _create_study(name: str, storage: Optional[str] = None, 
                 sampler_type: str = 'tpe', random_seed: Optional[int] = None) -> optuna.Study:
-    """Create an Optuna study for hyperparameter optimization.
-
-    Args:
-        name: Study name for identification.
-        storage: Optional database URL for study storage.
-        sampler_type: Type of optimization sampler ('tpe', 'random', 'cmaes', 'qmc').
-        random_seed: Optional seed for reproducibility.
-
-    Returns:
-        optuna.Study: Configured study instance.
-    """
+    """Create an Optuna study for hyperparameter optimization."""
+    # Silence optuna logging
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    
     if random_seed is None:
         random_seed = int(time.time())
         
@@ -147,86 +140,66 @@ def run_optimization(model_config: ModelConfig, timeout: Optional[int] = None,
                     storage: Optional[str] = None,
                     random_seed: Optional[int] = None,
                     n_trials: Optional[int] = None) -> Dict[str, Any]:
-    """Run hyperparameter optimization for the BERT classifier.
-
-    Performs systematic hyperparameter search using Optuna, with support for
-    multiple trials and early stopping.
-
-    Args:
-        model_config: Model configuration instance.
-        timeout: Optional timeout in seconds.
-        experiment_name: Name for the optimization experiment.
-        storage: Optional database URL for persisting results.
-        random_seed: Optional seed for reproducibility.
-        n_trials: Number of optimization trials to run.
-
-    Returns:
-        Dict containing the best parameters found.
-
-    Raises:
-        RuntimeError: If optimization fails.
-    """
-    log_separator(logger)
-    logger.info("Starting optimization")
-    logger.info("Number of trials: %s", n_trials or model_config.n_trials)
+    """Run hyperparameter optimization for the BERT classifier."""
+    # Only show detailed info if verbosity > 0
+    if model_config.verbosity > 0:
+        log_separator(logger)
+        logger.info("Starting optimization")
+        logger.info("Number of trials: %s", n_trials or model_config.n_trials)
+        logger.info("\nLoading data...")
     
-    # Load data using utility function - updated to handle train/val split correctly
-    logger.info("\nLoading data...")
+    # Load data silently
     train_texts, val_texts, train_labels, val_labels, label_encoder = load_and_preprocess_data(model_config)
     
-    # Combine train and validation sets for optimization trials
+    if model_config.num_classes is None:
+        model_config.num_classes = len(label_encoder.classes_)
+    
     texts = train_texts + val_texts
     labels = train_labels + val_labels
     
-    logger.info("Loaded %d samples with %d classes", len(texts), model_config.num_classes)
+    # Initialize progress bar
+    trial_pbar = tqdm(
+        total=n_trials or model_config.n_trials,
+        desc='Trials',
+        position=0,
+        leave=True,
+        ncols=80,
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}'
+    )
     
-    logger.info("Model config:")
-    logger.info("  BERT model: %s", model_config.bert_model_name)
-    logger.info("  Device: %s", model_config.device)
-    logger.info("  Max sequence length: %s", model_config.max_seq_len)  # Updated from max_length
-    logger.info("  Metric: %s", model_config.metric)
-    
-    logger.info("\nInitializing optimization...")
-    logger.info("\n")  # Add extra line break before progress bars
-    
-    # Initialize progress bars using utility function
-    trial_pbar, epoch_pbar = initialize_progress_bars(n_trials or model_config.n_trials, model_config.num_epochs)
-    
-    # Force line break before starting trials
-    logger.info("\n")  # Add extra line break before trials start
-    
-    # Create study (fix the reference)
+    # Create study and run optimization
     study = _create_study(experiment_name, storage, model_config.sampler, random_seed)
     study.set_user_attr("best_value", 0.0)
-    
-    # Track best performance across all trials
-    global_best_info = {
-        'score': float('-inf'),
-        'model_info': None
-    }
-    
-    # Run optimization
-    objective_with_progress = partial(objective, 
-                                    model_config=model_config,
-                                    texts=texts, 
-                                    labels=labels,
-                                    best_model_info=global_best_info,  # Pass global tracking
-                                    trial_pbar=trial_pbar,
-                                    epoch_pbar=epoch_pbar)
+    global_best_info = {'score': float('-inf'), 'model_info': None}
     
     try:
         study.optimize(
-            objective_with_progress,
+            partial(objective, 
+                   model_config=model_config,
+                   texts=texts, 
+                   labels=labels,
+                   best_model_info=global_best_info,
+                   trial_pbar=trial_pbar),
             n_trials=n_trials or model_config.n_trials,
             timeout=timeout,
-            callbacks=[save_trial_callback(experiment_name, model_config, global_best_info)],  # Pass global tracking
+            callbacks=[save_trial_callback(experiment_name, model_config, global_best_info)],
             gc_after_trial=True
         )
     finally:
         trial_pbar.close()
-        epoch_pbar.close()
         
+        # Always show best trial summary and save best model
         if global_best_info['model_info']:
+            print("\nBest Trial Configuration:")
+            print("=" * 50)
+            print(f"Trial Number: {global_best_info['model_info']['trial_number']}")
+            print(f"Score: {global_best_info['score']:.4f}")
+            print("\nHyperparameters:")
+            for key, value in global_best_info['model_info']['params'].items():
+                print(f"  {key}: {value}")
+            print("=" * 50)
+            
+            # Always save best model regardless of verbosity
             save_best_trial(global_best_info['model_info'], experiment_name, model_config)
             
     return study.best_trial.params
@@ -340,8 +313,12 @@ def get_trial_config(trial: optuna.Trial, model_config: ModelConfig) -> Tuple[in
         num_layers=num_hidden_layers
     )
     
+    # Add activation function as a trial parameter
+    activation = trial.suggest_categorical('activation', ['relu', 'gelu', 'silu', 'tanh'])
+    
     classifier_config = {
         'hidden_dim': hidden_dims,
+        'activation': activation,  # Now using suggested activation
         'dropout_rate': trial.suggest_float('dropout_rate', 0.1, 0.6),
         'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True),
         'warmup_ratio': trial.suggest_float('warmup_ratio', 0.0, 0.3)
@@ -375,7 +352,7 @@ def get_optimizer_config(trial, optimizer_name, learning_rate):
         optimizer_config.update({
             'betas': (
                 trial.suggest_float('beta1', 0.5, 0.9999),
-                trial.suggest_float('beta2', 0.9, 0.9999)
+                trial.suggest_float('beta2', .9, 0.9999)
             ),
             'eps': trial.suggest_float('eps', 1e-8, 1e-6, log=True)
         })
@@ -387,15 +364,101 @@ def get_optimizer_config(trial, optimizer_name, learning_rate):
     
     return optimizer_config
 
+def log_current_best(best_info: Dict[str, Any]) -> None:
+    """Log the current best trial configuration in a standardized format."""
+    if not best_info['model_info']:
+        return
+        
+    info = best_info['model_info']
+    params = info['params']
+    clf_config = info['config']
+    
+    logger.info("\nCurrent Best Trial Configuration:")
+    logger.info("=" * 50)
+    logger.info("Trial Number: %d", info['trial_number'])
+    logger.info("Score: %.4f", best_info['score'])
+    logger.info("\nHyperparameters:")
+    logger.info("  batch_size: %d", params['batch_size'])
+    logger.info("  hidden_layers: %s", clf_config['hidden_dim'])
+    logger.info("  dropout_rate: %.4f", clf_config['dropout_rate'])
+    logger.info("  weight_decay: %.6f", clf_config['weight_decay'])
+    logger.info("  warmup_ratio: %.2f", clf_config['warmup_ratio'])
+    logger.info("  optimizer: %s", clf_config['optimizer'])
+    logger.info("  learning_rate: %.6f", clf_config['learning_rate'])
+    logger.info("=" * 50)
+
+def log_trial_config(trial_num: int, classifier_config: Dict[str, Any], total_trials: int, score: Optional[float] = None) -> None:
+    """Log trial configuration in a clean, structured format."""
+    hidden_dims = classifier_config['hidden_dim']
+    opt_config = classifier_config['optimizer_config']
+    activation = classifier_config.get('activation', 'gelu')
+    
+    logger.info("\nTrial %d of %d:", trial_num + 1, total_trials)
+    logger.info("=" * 50)
+    logger.info("Architecture:")
+    logger.info("  Hidden layers: %s", hidden_dims)
+    logger.info("  Activation: %s", activation)
+    logger.info("  Dropout rate: %.3f", classifier_config['dropout_rate'])
+    logger.info("  Weight decay: %.2e", classifier_config['weight_decay'])
+    logger.info("  Warmup ratio: %.2f", classifier_config['warmup_ratio'])
+    
+    if classifier_config['optimizer'] == 'rmsprop':
+        logger.info("  Momentum: %.3f", opt_config['momentum'])
+        logger.info("  Alpha: %.3f", opt_config['alpha'])
+    elif classifier_config['optimizer'] == 'sgd':
+        logger.info("  Momentum: %.3f", opt_config['momentum'])
+        logger.info("  Nesterov: %s", opt_config.get('nesterov', False))
+        
+    if score is not None:
+        logger.info("\nScore:")
+        logger.info("  f1: %.4f", score)
+    logger.info("=" * 50)
+
+def log_trial_summary(trial_num: int, config: Dict[str, Any], score: float, total_trials: int) -> None:
+    """Log a clean summary of trial configuration and performance."""
+    # Only log if we have a score (i.e., at end of trial)
+    if score is None:
+        return
+        
+    tqdm.write("\n" + "=" * 50)
+    tqdm.write(f"Trial {trial_num + 1} of {total_trials}:")
+    tqdm.write("=" * 50)
+    tqdm.write("Architecture:")
+    tqdm.write(f"  Hidden layers: {config['hidden_dim']}")
+    tqdm.write(f"  Activation: {config['activation']}")
+    tqdm.write(f"  Dropout rate: {config['dropout_rate']:.3f}")
+    tqdm.write("")
+    tqdm.write(f"Optimizer: {config['optimizer']}")
+    tqdm.write(f"  Learning rate: {config['learning_rate']:.2e}")
+    tqdm.write(f"  Weight decay: {config['weight_decay']:.2e}")
+    tqdm.write(f"  Warmup ratio: {config['warmup_ratio']:.2f}")
+
+    opt_config = config['optimizer_config']
+    if config['optimizer'] == 'rmsprop':
+        tqdm.write(f"  Momentum: {opt_config['momentum']:.3f}")
+        tqdm.write(f"  Alpha: {opt_config['alpha']:.3f}")
+    elif config['optimizer'] == 'sgd':
+        tqdm.write(f"  Momentum: {opt_config['momentum']:.3f}")
+        tqdm.write(f"  Nesterov: {opt_config.get('nesterov', False)}")
+    
+    tqdm.write("\nScore:")
+    tqdm.write(f"  f1: {score:.4f}")
+    tqdm.write("=" * 50 + "\n")
+
 def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], labels: List[int],
-             best_model_info: Dict[str, Any], trial_pbar: Optional[tqdm] = None, 
-             epoch_pbar: Optional[tqdm] = None) -> float:
+             best_model_info: Dict[str, Any], trial_pbar: Optional[tqdm] = None) -> float:
     """Optimization objective function for a single trial."""
+    trial_best_score = 0.0
+    classifier_config = None
+    
     try:
-        # Get trial configuration
         batch_size, classifier_config, optimizer_name, optimizer_config = get_trial_config(
             trial, model_config
         )
+        
+        # Only show trial progress if verbosity > 0
+        if model_config.verbosity > 0:
+            log_trial_summary(trial.number, classifier_config, None, model_config.n_trials)
         
         # Create train/val split
         train_texts, val_texts, train_labels, val_labels = train_test_split(
@@ -416,35 +479,25 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
         )
         
         # Training loop
-        trial_best_score = 0.0
         trial_best_state = None
-        # Adjust early stopping parameters
-        patience = max(3, min(8, trial.number // 2))  # Reduced patience
-        min_epochs = max(5, model_config.num_epochs // 3)  # Increased minimum epochs
+        patience = max(3, min(8, trial.number // 2))
+        min_epochs = max(5, model_config.num_epochs // 3)
         no_improve_count = 0
         last_score = float('-inf')
         
+        # Main training loop
         for epoch in range(model_config.num_epochs):
             try:
-                if epoch_pbar:
-                    # Update description without newline
-                    epoch_pbar.set_description(f"Trial {trial.number} Epoch {epoch+1}")
-                    epoch_pbar.refresh()  # Force refresh of display
+                # Train for one epoch
+                train_loss = trainer.train_epoch(train_dataloader, optimizer, scheduler)
                 
-                trainer.train_epoch(train_dataloader, optimizer, scheduler)
+                # Evaluate
                 score, metrics = trainer.evaluate(val_dataloader)
                 
-                if epoch_pbar:
-                    epoch_pbar.update(1)
-                
-                # Report to Optuna without logging
+                # Report to Optuna
                 trial.report(score, epoch)
                 
-                # Check for significant regression
-                if epoch >= min_epochs and score < last_score * 0.8:
-                    logger.warning(f"Trial {trial.number} showing significant performance regression")
-                    raise optuna.TrialPruned(f"Performance dropped by more than 20% (from {last_score:.4f} to {score:.4f})")
-                
+                # Check for improvement
                 if score > trial_best_score:
                     no_improve_count = 0
                     trial_best_score = score
@@ -458,50 +511,45 @@ def objective(trial: optuna.Trial, model_config: ModelConfig, texts: List[str], 
                         'epoch': epoch,
                         'metrics': metrics
                     }
-                    
-                    if trial_best_score > best_model_info['score']:
-                        best_model_info['score'] = trial_best_score
-                        best_model_info['model_info'] = trial_best_state
-                        # Log new best model on new line
-                        logger.info("\nNew best model found in trial %d with score: %.4f (epoch %d)", 
-                                  trial.number, trial_best_score, epoch)
                 else:
                     no_improve_count += 1
                 
-                # Handle pruning
-                should_prune = False
-                reason = ""
+                # Early stopping checks
+                should_stop = False
                 if epoch >= min_epochs:
-                    if trial.should_prune():
-                        should_prune = True
-                        reason = "Optuna pruning triggered"
-                    elif no_improve_count >= patience:
-                        should_prune = True
-                        reason = "No improvement for %d epochs" % patience
+                    if score < last_score * 0.8:  # Significant regression
+                        should_stop = True
+                    elif no_improve_count >= patience:  # No improvement
+                        should_stop = True
+                    elif trial.should_prune():  # Optuna wants to prune
+                        should_stop = True
+                
+                if should_stop:
+                    break
                     
-                if should_prune:
-                    logger.info("\nPruning trial %d at epoch %d: %s", trial.number, epoch, reason)
-                    logger.info(f"Final trial score: {trial_best_score:.4f}")
-                    raise optuna.TrialPruned(reason)
-                    
-            except optuna.TrialPruned as e:
-                logger.info(f"\nTrial {trial.number} pruned at epoch {epoch}: {str(e)}")
-                raise
             except Exception as e:
-                logger.error(f"\nError in epoch {epoch}: {str(e)}", exc_info=True)
+                logger.error(f"Error in epoch {epoch}: {str(e)}")
                 raise
         
+        # Update progress and log final result
         if trial_pbar:
             trial_pbar.update(1)
+            # Only show per-trial results if verbosity > 0
+            if model_config.verbosity > 0:
+                log_trial_summary(trial.number, classifier_config, trial_best_score, model_config.n_trials)
+        
+        # Save best state if this is the best trial so far
+        if trial_best_state and trial_best_score > best_model_info['score']:
+            best_model_info['score'] = trial_best_score
+            best_model_info['model_info'] = trial_best_state
             
         return trial_best_score
         
-    except optuna.TrialPruned as e:
-        if trial_best_score > 0:
-            return trial_best_score
-        raise
     except Exception as e:
-        logger.error(f"\nTrial {trial.number} failed: {str(e)}", exc_info=True)
+        if trial_pbar:
+            trial_pbar.update(1)
+        if model_config.verbosity > 0:  # Only log error details if not in minimal mode
+            logger.error(f"Trial {trial.number} failed: {str(e)}", exc_info=True)
         raise
 
 def save_trial_callback(trial_study_name: str, model_config: ModelConfig, best_model_info: Dict[str, Any]):
@@ -584,9 +632,22 @@ def parse_args() -> argparse.Namespace:
     
     return parser.parse_args()
 
+def log_best_configuration(study: optuna.Study, best_info: Dict[str, Any]) -> None:
+    """Log details about the best trial configuration."""
+    logger.info("\nBest Trial Configuration:")
+    logger.info("=" * 50)
+    logger.info("Trial Number: %d", best_info['model_info']['trial_number'])
+    logger.info("Score: %.4f", best_info['score'])
+    logger.info("\nHyperparameters:")
+    for key, value in best_info['model_info']['params'].items():
+        logger.info("  %s: %s", key, value)
+    logger.info("=" * 50)
+
 if __name__ == "__main__":
     args = parse_args()
     config = ModelConfig.from_args(args)
+    setup_logging(config)  # Initialize logging configuration first
+
     
     try:
         trials_per_exp = args.trials_per_experiment or args.n_trials

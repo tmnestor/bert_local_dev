@@ -1,0 +1,44 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  simple:
+    format: '%(message)s'  # Simplified format for cleaner output
+  detailed:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple  # Use simple formatter for console
+    stream: ext://sys.stdout
+
+  file:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: detailed  # Keep detailed format for file
+    filename: ${LOG_FILE}
+    mode: 'a'
+
+loggers:
+  src:  # Root logger for your project
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+    
+  src.training:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+
+  src.tuning:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
+
+  src.evaluation:
+    level: INFO
+    handlers: [console, file]
+    propagate: false

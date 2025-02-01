@@ -10,8 +10,9 @@ from sklearn.metrics import accuracy_score, classification_report, f1_score
 from tqdm.auto import tqdm
 
 from src.config.config import ModelConfig
+from ..utils.logging_manager import get_logger  # Changed from setup_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)  # Changed to get_logger
 
 class TrainerError(Exception):
     """Custom exception for Trainer errors."""

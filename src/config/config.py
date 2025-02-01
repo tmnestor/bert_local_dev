@@ -62,6 +62,9 @@ class ModelConfig(BaseConfig):
     data_dir: Path = field(init=False)
     models_dir: Path = field(init=False)
     
+    # Add verbosity control
+    verbosity: int = field(default=1)  # 0=WARNING, 1=INFO, 2=DEBUG
+    
     def __post_init__(self):
         """Initialize directory paths after initialization."""
         self._init_directories()
@@ -216,6 +219,12 @@ class ModelConfig(BaseConfig):
         # Remove bert_encoder_path argument
         model_paths = parser.add_argument_group('Model Paths')
         # No additional arguments needed here now
+        
+        # Add logging control
+        logging_group = parser.add_argument_group('Logging')
+        logging_group.add_argument('--verbosity', type=int, choices=[0, 1, 2],
+                                 default=1,
+                                 help='Logging verbosity (0=minimal, 1=normal, 2=debug)')
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'ModelConfig':

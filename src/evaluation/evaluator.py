@@ -11,11 +11,11 @@ from ..config.config import EvaluationConfig, ModelConfig
 from ..models.model import BERTClassifier
 from ..utils.metrics import calculate_metrics
 from ..data_utils import load_and_preprocess_data, create_dataloaders  # Changed import
-from ..utils.logging_manager import setup_logger
+from ..utils.logging_manager import get_logger, setup_logging  # Change from setup_logger
 from ..utils.model_loading import safe_load_checkpoint, verify_state_dict
 from ..config.defaults import MODEL_DEFAULTS  # Add this import
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)  # Change to get_logger
 
 class ModelEvaluator:
     """Model evaluation class for BERT classifiers.
@@ -60,114 +60,102 @@ class ModelEvaluator:
         # Simple concatenation of input size, hidden dims, and output size
         return [input_size] + hidden_dims + [num_classes]
 
-    def _load_model(self) -> BERTClassifier:
-        """Load model from checkpoint."""
+    def _load_model(self) -> None:
+        """Load trained model from checkpoint."""
         try:
-            # Load checkpoint safely
-            checkpoint = safe_load_checkpoint(
-                self.model_path,
-                self.device,
-                weights_only=True
-            )
-            classifier_config = checkpoint['config']['classifier_config']
+            logger.info(f"Loading checkpoint from {self.config.best_model}")
+            checkpoint = torch.load(self.config.best_model, map_location=self.config.device)
             
-            # Get model configuration from checkpoint
-            model_config = checkpoint['config'].get('model_config', {})
-            bert_hidden_size = model_config.get('bert_hidden_size', MODEL_DEFAULTS['bert_hidden_size'])
-            num_classes = model_config.get('num_classes', self.config.num_classes)
+            # First try optimization checkpoint format
+            if 'config' in checkpoint and 'classifier_config' in checkpoint['config']:
+                classifier_config = checkpoint['config']['classifier_config']
+                num_classes = checkpoint.get('num_classes')
+                if classifier_config is None:
+                    raise ValueError("Checkpoint missing classifier configuration")
+                
+            # Debug log the loaded configuration
+            logger.info("\nLoaded checkpoint configuration:")
+            for k, v in classifier_config.items():
+                logger.info("  %s: %s", k, str(v))
             
-            # Create model instance with proper configuration
-            model = BERTClassifier(
+            # Extract model configuration
+            model_config = checkpoint.get('config', {}).get('model_config', {})
+            num_classes = checkpoint.get('num_classes', self.config.num_classes)
+            
+            # Validate critical parameters
+            if num_classes is None:
+                raise ValueError("num_classes not found in checkpoint")
+            if 'hidden_dim' not in classifier_config:
+                raise ValueError("hidden_dim not found in classifier_config")
+                
+            # Create model with exact same configuration as saved
+            self.model = BERTClassifier(
                 self.config.bert_model_name,
                 num_classes,
                 classifier_config
             )
             
-            # Verify and load state dict
-            verify_state_dict(checkpoint['model_state_dict'], model)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            model.to(self.device)
-            model.eval()
+            # Load state dict
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            else:
+                raise ValueError("No state dict found in checkpoint")
             
-            # Log model details
-            logger.info(f"\nLoading model from checkpoint: {self.model_path}")
-            logger.info("\nModel Selection Details:")
-            logger.info("Checkpoint file: %s", self.model_path)
-            logger.info("Model file size: %.2f MB", self.model_path.stat().st_size / (1024 * 1024))
-            logger.info("Checkpoint keys: %s", list(checkpoint.keys()))
+            # Verify state dict matches
+            current_state = self.model.state_dict()
+            current_shapes = {k: v.shape for k, v in current_state.items()}
+            checkpoint_shapes = {k: v.shape for k, v in state_dict.items()}
             
-            logger.info("\nOptimization History:")
-            logger.info("Study Name: %s", checkpoint.get('study_name', 'N/A'))
-            logger.info("Trial Number: %s", checkpoint.get('trial_number', 'N/A'))
-            logger.info("Optimization Metric: %s", checkpoint.get('metric', 'N/A'))
-            logger.info("Best Optimization Score: %.4f", checkpoint.get('metric_value', float('nan')))
-            logger.info("Validation Split Size: %s", checkpoint.get('val_size', 'N/A'))
+            if current_shapes != checkpoint_shapes:
+                logger.error("Model architecture mismatch:")
+                for key in set(current_shapes) | set(checkpoint_shapes):
+                    if key in current_shapes and key in checkpoint_shapes:
+                        if current_shapes[key] != checkpoint_shapes[key]:
+                            logger.error("  %s: checkpoint=%s, current=%s", 
+                                       key, checkpoint_shapes[key], current_shapes[key])
+                    elif key in current_shapes:
+                        logger.error("  %s: missing in checkpoint (current=%s)", 
+                                   key, current_shapes[key])
+                    else:
+                        logger.error("  %s: unexpected in checkpoint (%s)", 
+                                   key, checkpoint_shapes[key])
+                raise ValueError("Model architecture does not match checkpoint")
             
-            logger.info("\nArchitecture Configuration:")
-            logger.info("Hidden Dimensions: %s", classifier_config.get('hidden_dim', []))
-            logger.info("Learning Rate: %.6f", classifier_config.get('learning_rate', 0.0))
-            logger.info("Weight Decay: %.6f", classifier_config.get('weight_decay', 0.0))
-            logger.info("Dropout Rate: %.4f", classifier_config.get('dropout_rate', 0.1))
+            # Load the state dict
+            self.model.load_state_dict(state_dict)
+            self.model.to(self.config.device)
+            self.model.eval()
             
-            # Use correct BERT hidden size from saved config
-            layer_sizes = self._calculate_layer_sizes(
-                bert_hidden_size,
-                classifier_config.get('hidden_dim', [256, 218]),
-                num_classes
-            )
-            hidden_layers = layer_sizes[1:-1]
-            logger.info("Layer Sizes: %s", layer_sizes)
-            
-            if 'hyperparameters' in checkpoint:
-                logger.info("\nTrial Hyperparameters:")
-                for key, value in checkpoint['hyperparameters'].items():
-                    logger.info("  %s: %s", key, value)
-            
-            return model
+            logger.info("Successfully loaded model")
+            return self.model
             
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}") from e
-    
-    def evaluate(self, 
-                save_predictions: bool = True,
-                output_dir: Optional[Path] = None) -> Tuple[Dict[str, float], pd.DataFrame]:
-        """Evaluate model on test dataset.
-        
-        Args:
-            save_predictions (bool, optional): Whether to save predictions to files.
-                Defaults to True.
-            output_dir (Optional[Path], optional): Directory to save results.
-                Defaults to None, which creates 'evaluation_results' directory.
-        
-        Returns:
-            Tuple[Dict[str, float], pd.DataFrame]: Tuple containing:
-                - Dictionary of evaluation metrics
-                - DataFrame with predictions and ground truth
-        """
+
+    def evaluate(self, save_predictions: bool = True, output_dir: Optional[Path] = None) -> Tuple[Dict[str, float], pd.DataFrame]:
+        """Evaluate model on test dataset."""
+        output_dir = output_dir or self.config.evaluation_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load and prepare data first
         test_texts, test_labels, label_encoder = load_and_preprocess_data(
             self.config, validation_mode=True
         )
-        
-        logger.info("\nEvaluation Data Split:")
-        logger.info("Test set size: %d samples", len(test_texts))
-        logger.info("Label distribution:")
-        unique_labels, counts = np.unique(test_labels, return_counts=True)
-        for label, count in zip(label_encoder.inverse_transform(unique_labels), counts):
-            logger.info("  %s: %d samples (%.2f%%)", label, count, 100 * count/len(test_labels))
-        
+
+        # Create dataloader and run evaluation
         test_dataloader = create_dataloaders(
-            test_texts,
-            test_labels,
-            self.config,
-            self.config.batch_size,
+            test_texts, test_labels, 
+            self.config, self.config.batch_size,
             validation_mode=True
         )
         
+        # Run evaluation
         all_preds = []
         all_labels = []
         all_probs = []
         
-        logger.info("Starting evaluation (with dropout disabled)...")
         self.model.eval()
         with torch.no_grad():
             for batch in tqdm(test_dataloader, desc="Evaluating"):
@@ -183,15 +171,8 @@ class ModelEvaluator:
                 all_labels.extend(labels.tolist())
                 all_probs.extend(probs.cpu().tolist())
         
+        # Calculate metrics and create results DataFrame
         metrics = calculate_metrics(all_labels, all_preds, self.metrics)
-        
-        if hasattr(self, 'optimization_metric_value'):
-            logger.info("\nMetric Comparison:")
-            logger.info("Optimization Score: %.4f", self.optimization_metric_value)
-            logger.info("Evaluation Score: %.4f", metrics.get(self.config.metric, float('nan')))
-            if abs(self.optimization_metric_value - metrics.get(self.config.metric, 0)) > 0.05:
-                logger.warning("Large discrepancy between optimization and evaluation scores!")
-        
         results_df = pd.DataFrame({
             'text': test_texts,
             'true_label': label_encoder.inverse_transform(all_labels),
@@ -199,34 +180,33 @@ class ModelEvaluator:
             'confidence': [max(probs) for probs in all_probs]
         })
         
-        if save_predictions:
-            # Use config's evaluation_dir instead of default path
-            output_dir = output_dir or self.config.evaluation_dir
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            results_df.to_csv(output_dir / 'test_predictions.csv', index=False)
-            
-            report = classification_report(
-                all_labels, all_preds,
-                target_names=label_encoder.classes_,
-                output_dict=True
-            )
-            pd.DataFrame(report).to_csv(output_dir / 'classification_report.csv')
-            
-            confusion_df = pd.crosstab(
-                results_df['true_label'],
-                results_df['predicted_label'],
-                margins=True
-            )
-            confusion_df.to_csv(output_dir / 'confusion_matrix.csv')
-            
-            logger.info("\nEvaluation Results:")
+        # Create confusion matrix
+        confusion_df = pd.crosstab(
+            results_df['true_label'],
+            results_df['predicted_label'],
+            margins=True
+        )
+
+        # Show results based on verbosity
+        if self.config.verbosity > 0:
+            tqdm.write("\nEvaluation Results:")
+            tqdm.write("-"*30)
             for metric, value in metrics.items():
-                logger.info(f"{metric}: {value:.4f}")
+                tqdm.write(f"{metric.capitalize()}: {value:.4f}")
             
-            logger.info("\nConfusion Matrix:")
-            logger.info("\n" + str(confusion_df))
-            
+            if self.config.verbosity > 1:  # Show confusion matrix only in debug mode
+                tqdm.write("\nConfusion Matrix:")
+                tqdm.write("-"*30)
+                tqdm.write("\n" + confusion_df.to_string())
+                
+            tqdm.write("\n" + "="*50)
+
+        if save_predictions:
+            # Save results
+            results_df.to_csv(output_dir / 'predictions.csv', index=False)
+            confusion_df.to_csv(output_dir / 'confusion_matrix.csv')
+            tqdm.write(f"\nDetailed results saved to: {output_dir}")
+        
         return metrics, results_df
 
     @classmethod
@@ -261,14 +241,14 @@ class ModelEvaluator:
         model_args.add_argument('--batch_size', type=int, default=32,
                               help='Batch size for evaluation')
 
-# ...existing code...
-
 def main():
     """Command-line interface entry point for model evaluation."""
     parser = argparse.ArgumentParser(description='Evaluate trained BERT classifier')
     EvaluationConfig.add_argparse_args(parser)
     args = parser.parse_args()
     config = EvaluationConfig.from_args(args)
+    setup_logging(config)  # Initialize logging configuration first
+
     
     try:
         best_model = Path(args.best_model)
