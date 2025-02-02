@@ -30,6 +30,15 @@ def load_config(config_path: Path = None) -> dict:
     if 'model_paths' in config:
         config['model_paths'] = {k: str(v) for k, v in config['model_paths'].items()}
     
+    # Convert string tuple to actual tuple for betas
+    if 'optimizer' in config:
+        if 'betas' in config['optimizer']:
+            beta_str = config['optimizer']['betas']
+            if isinstance(beta_str, str):
+                # Remove parentheses and split
+                beta_str = beta_str.strip('()').split(',')
+                config['optimizer']['betas'] = tuple(float(x.strip()) for x in beta_str)
+
     return config
 
 # Load configuration

@@ -1,33 +1,36 @@
 #!/usr/bin/env python
 import argparse
+import random
 import time
 import warnings
+from collections import deque
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Iterator, Tuple
+from typing import Any, Deque, Dict, Iterator, List, Optional, Tuple
 
+import numpy as np
 import optuna
 import torch
-from torch import optim
 from optuna._experimental import ExperimentalWarning
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
+from sklearn.model_selection import train_test_split
+from torch import optim
 from tqdm.auto import tqdm
 from transformers import get_linear_schedule_with_warmup
-from sklearn.model_selection import train_test_split
 
 from ..config.config import ModelConfig
+from ..config.defaults import (  # Update imports
+    CLASSIFIER_DEFAULTS,  # Add this import
+)
+from ..data_utils import create_dataloaders, load_and_preprocess_data
 from ..models.model import BERTClassifier
 from ..training.trainer import Trainer
-from ..data_utils import load_and_preprocess_data, create_dataloaders
-from ..utils.train_utils import log_separator
 from ..utils.logging_manager import (
     get_logger,
     setup_logging,
 )  # Change from setup_logger
-from ..config.defaults import (  # Update imports
-    CLASSIFIER_DEFAULTS,  # Add this import
-)
+from ..utils.train_utils import log_separator
 
 # Silence specific Optuna warnings
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
@@ -35,21 +38,106 @@ warnings.filterwarnings("ignore", category=ExperimentalWarning)
 logger = get_logger(__name__)  # Change to get_logger
 
 
+class PBTManager:
+    """Population Based Training manager for hyperparameter optimization.
+
+    This class implements the Population Based Training algorithm, managing a population
+    of trials and their hyperparameters. It handles exploration and exploitation of the
+    parameter space based on trial performance.
+
+    Attributes:
+        population_size (int): Size of the population to maintain.
+        exploit_threshold (float): Threshold for determining when to exploit better solutions.
+        population (List[Dict]): List of dictionaries containing trial information.
+        generation (int): Current generation number.
+    """
+
+    def __init__(self, population_size: int = 4, exploit_threshold: float = 0.2):
+        self.population_size = population_size
+        self.exploit_threshold = exploit_threshold
+        self.population: List[Dict] = []
+        self.generation = 0
+
+    def should_explore(self, score: float) -> bool:
+        """Determine if a trial should explore new hyperparameters."""
+        if len(self.population) < self.population_size:
+            return False
+
+        # Sort population by score
+        sorted_pop = sorted(self.population, key=lambda x: x["score"], reverse=True)
+
+        # Find position of current score
+        for idx, member in enumerate(sorted_pop):
+            if score <= member["score"]:
+                # Explore if in bottom percentile
+                return idx >= len(sorted_pop) * (1 - self.exploit_threshold)
+        return True
+
+    def explore(self, current_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate new parameters by perturbing current ones."""
+        new_params = current_params.copy()
+
+        # Perturb continuous parameters
+        for key in ["lr", "weight_decay", "dropout_rate", "warmup_ratio"]:
+            if key in new_params:
+                # Perturb by random factor between 0.8 and 1.2
+                new_params[key] *= random.uniform(0.8, 1.2)
+
+        return new_params
+
+    def exploit(
+        self, score: float, current_params: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Copy parameters from better performing trials.
+
+        Args:
+            score: Current trial's score
+            current_params: Current trial's parameters to potentially replace
+
+        Returns:
+            Optional[Dict[str, Any]]: Parameters from a better performing trial or None
+        """
+        if len(self.population) < 2:
+            return None
+
+        # Find better performing trials
+        better_trials = [
+            p
+            for p in self.population
+            if p["score"] > score and p["params"] != current_params
+        ]  # Avoid self-copy
+        if not better_trials:
+            return None
+
+        # Copy from a random better trial
+        chosen = random.choice(better_trials)
+        return chosen["params"].copy()
+
+    def update_population(self, score: float, params: Dict[str, Any], trial_num: int):
+        """Update population with new trial results."""
+        self.population.append({"score": score, "params": params, "trial": trial_num})
+
+        # Keep only the best population_size members
+        if len(self.population) > self.population_size:
+            self.population.sort(key=lambda x: x["score"], reverse=True)
+            self.population = self.population[: self.population_size]
+
+
 def create_optimizer(
     optimizer_name: str, model_params: Iterator[torch.nn.Parameter], **kwargs
 ) -> torch.optim.Optimizer:
-    """Create optimizer instance with proper parameter mapping.
+    """Creates a PyTorch optimizer with proper parameter mapping.
 
     Args:
-        optimizer_name: Name of optimizer to create
-        model_params: Model parameters to optimize
-        **kwargs: Optimizer configuration parameters
+        optimizer_name (str): Name of the optimizer to create (adam, adamw, sgd, rmsprop).
+        model_params (Iterator[torch.nn.Parameter]): Model parameters to optimize.
+        **kwargs: Optimizer-specific configuration parameters.
 
     Returns:
-        Configured optimizer instance
+        torch.optim.Optimizer: Configured optimizer instance.
 
     Raises:
-        ValueError: If optimizer_name is invalid
+        ValueError: If optimizer_name is not one of the supported optimizers.
     """
     # Map common parameter names to optimizer-specific names
     param_mapping = {
@@ -175,7 +263,18 @@ def run_optimization(
     # Create study and run optimization
     study = _create_study(experiment_name, storage, model_config.sampler, random_seed)
     study.set_user_attr("best_value", 0.0)
-    global_best_info = {"score": float("-inf"), "model_info": None}
+    global_best_info = {
+        "score": float("-inf"),
+        "model_info": {
+            "trial_number": None,
+            "params": {},
+            "model_state": None,
+            "config": {},
+        },
+    }
+
+    # Initialize PBT manager
+    pbt_manager = PBTManager(population_size=4)
 
     try:
         study.optimize(
@@ -186,11 +285,15 @@ def run_optimization(
                 labels=labels,
                 best_model_info=global_best_info,
                 trial_pbar=trial_pbar,
+                pbt_manager=pbt_manager,  # Pass PBT manager to objective
             ),
             n_trials=n_trials or model_config.n_trials,
             timeout=timeout,
             callbacks=[
-                save_trial_callback(experiment_name, model_config, global_best_info)
+                save_trial_callback(experiment_name, model_config, global_best_info),
+                lambda study, trial: pbt_manager.update_population(  # Add PBT callback
+                    trial.value or float("-inf"), trial.params, trial.number
+                ),
             ],
             gc_after_trial=True,
         )
@@ -274,7 +377,9 @@ def setup_training_components(
     optimizer = create_optimizer(optimizer_name, model.parameters(), **optimizer_config)
 
     total_steps = len(train_dataloader) * model_config.num_epochs
-    warmup_steps = int(total_steps * classifier_config["warmup_ratio"])  # Using config value
+    warmup_steps = int(
+        total_steps * classifier_config["warmup_ratio"]
+    )  # Using config value
     scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
     return model, trainer, optimizer, scheduler
@@ -314,11 +419,39 @@ def calculate_hidden_sizes(
     return sizes
 
 
+class MemoryManager:
+    """Manage memory during optimization."""
+
+    def __init__(self):
+        self.memory_threshold = 0.85  # 85% memory usage threshold
+        self.batch_size_limits = {"min": 8, "max": 64, "current": 32}
+
+    def check_memory(self) -> float:
+        import psutil
+
+        return psutil.Process().memory_percent()
+
+    def adjust_batch_size(self, current_memory: float) -> int:
+        """Dynamically adjust batch size based on memory usage."""
+        if current_memory > self.memory_threshold:
+            self.batch_size_limits["current"] = max(
+                self.batch_size_limits["current"] // 2, self.batch_size_limits["min"]
+            )
+        return self.batch_size_limits["current"]
+
+
 def get_trial_config(
     trial: optuna.Trial, model_config: ModelConfig
 ) -> Tuple[int, Dict, str, Dict]:
     """Get trial configuration parameters."""
-    batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128, 256])
+    # Add memory-aware batch size selection
+    memory_manager = MemoryManager()
+    current_memory = memory_manager.check_memory()
+    max_batch = memory_manager.adjust_batch_size(current_memory)
+
+    # Use dynamic batch size options
+    batch_sizes = [size for size in [8, 16, 32, 64] if size <= max_batch]
+    batch_size = trial.suggest_categorical("batch_size", batch_sizes)
 
     # Get number of hidden layers
     num_hidden_layers = trial.suggest_int("num_hidden_layers", 1, 4)
@@ -346,14 +479,18 @@ def get_trial_config(
     }
 
     optimizer_name = trial.suggest_categorical("optimizer", ["adamw", "sgd", "rmsprop"])
-    learning_rate = trial.suggest_float("lr", 1e-6, 5e-3, log=True)  # Changed parameter name
+    learning_rate = trial.suggest_float(
+        "lr", 1e-6, 5e-3, log=True
+    )  # Changed parameter name
 
     optimizer_config = get_optimizer_config(trial, optimizer_name, learning_rate)
-    classifier_config.update({
-        'lr': learning_rate,  # Changed from learning_rate
-        'optimizer': optimizer_name,
-        'optimizer_config': optimizer_config.copy(),
-    })
+    classifier_config.update(
+        {
+            "lr": learning_rate,  # Changed from learning_rate
+            "optimizer": optimizer_name,
+            "optimizer_config": optimizer_config.copy(),
+        }
+    )
 
     return batch_size, classifier_config, optimizer_name, optimizer_config
 
@@ -361,8 +498,8 @@ def get_trial_config(
 def get_optimizer_config(trial, optimizer_name, lr):  # Changed parameter name
     """Get optimizer-specific configuration."""
     optimizer_config = {
-        'lr': lr,  # Changed from learning_rate
-        'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True),
+        "lr": lr,  # Changed from learning_rate
+        "weight_decay": trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True),
     }
 
     if optimizer_name == "sgd":
@@ -467,7 +604,9 @@ def log_trial_summary(
     tqdm.write(f"  Dropout rate: {trial_config['dropout_rate']:.3f}")
     tqdm.write("")
     tqdm.write(f"Optimizer: {trial_config['optimizer']}")
-    tqdm.write(f"  Learning rate: {trial_config['lr']:.2e}")  # Changed from learning_rate to lr
+    tqdm.write(
+        f"  Learning rate: {trial_config['lr']:.2e}"
+    )  # Changed from learning_rate to lr
     tqdm.write(f"  Weight decay: {trial_config['weight_decay']:.2e}")
     tqdm.write(f"  Warmup ratio: {trial_config['warmup_ratio']:.2f}")
 
@@ -484,6 +623,82 @@ def log_trial_summary(
     tqdm.write("=" * 50 + "\n")
 
 
+class EarlyStoppingManager:
+    """Enhanced early stopping with moving averages and trend detection."""
+
+    def __init__(
+        self,
+        patience: int = 5,
+        min_epochs: int = 5,
+        improvement_threshold: float = 0.001,
+        smoothing_window: int = 3,
+        trend_window: int = 5,
+    ):
+        self.patience = patience
+        self.min_epochs = min_epochs
+        self.improvement_threshold = improvement_threshold
+        self.smoothing_window = smoothing_window
+        self.trend_window = trend_window
+
+        # State tracking
+        self.best_score = float("-inf")
+        self.best_epoch = 0
+        self.scores: Deque[float] = deque(maxlen=trend_window)
+        self.no_improve_count = 0
+
+    def should_stop(self, epoch: int, score: float) -> Tuple[bool, str]:
+        """Determine if training should stop based on multiple criteria."""
+        if epoch < self.min_epochs:
+            return False, "Continuing - below minimum epochs"
+
+        self.scores.append(score)
+        smooth_score = self._get_smooth_score()
+
+        # Update best score if improved significantly
+        if smooth_score > self.best_score + self.improvement_threshold:
+            self.best_score = smooth_score
+            self.best_epoch = epoch
+            self.no_improve_count = 0
+            return False, "New best score"
+
+        self.no_improve_count += 1
+
+        # Check multiple stopping conditions
+        reasons = []
+
+        # 1. No improvement for too long
+        if self.no_improve_count >= self.patience:
+            reasons.append(f"No improvement for {self.patience} epochs")
+
+        # 2. Performance regression
+        if len(self.scores) >= 3:
+            avg_recent = np.mean(list(self.scores)[-3:])
+            if avg_recent < self.best_score * 0.8:  # 20% drop
+                reasons.append("Significant performance regression")
+
+        # 3. Detect negative trend
+        if len(self.scores) >= self.trend_window:
+            trend = self._calculate_trend()
+            if trend < -0.01:  # Negative trend threshold
+                reasons.append("Negative performance trend")
+
+        return bool(reasons), " & ".join(reasons)
+
+    def _get_smooth_score(self) -> float:
+        """Calculate smoothed score using moving average."""
+        if len(self.scores) < self.smoothing_window:
+            return list(self.scores)[-1]
+        return np.mean(list(self.scores)[-self.smoothing_window :])
+
+    def _calculate_trend(self) -> float:
+        """Calculate the trend of recent scores using linear regression."""
+        if len(self.scores) < self.trend_window:
+            return 0.0
+        x = np.arange(len(self.scores))
+        y = np.array(list(self.scores))
+        return np.polyfit(x, y, 1)[0]  # Return slope
+
+
 def objective(
     trial: optuna.Trial,
     model_config: ModelConfig,
@@ -491,8 +706,29 @@ def objective(
     labels: List[int],
     best_model_info: Dict[str, Any],
     trial_pbar: Optional[tqdm] = None,
+    pbt_manager: Optional[PBTManager] = None,
 ) -> float:
-    """Optimization objective function for a single trial."""
+    """Optimization objective function for a single trial.
+
+    Handles the training and evaluation of a single hyperparameter configuration trial,
+    including Population Based Training updates if enabled.
+
+    Args:
+        trial (optuna.Trial): Current optimization trial.
+        model_config (ModelConfig): Model configuration object.
+        texts (List[str]): List of input texts.
+        labels (List[int]): List of corresponding labels.
+        best_model_info (Dict[str, Any]): Dictionary tracking best model information.
+        trial_pbar (Optional[tqdm]): Progress bar for trial tracking.
+        pbt_manager (Optional[PBTManager]): Population Based Training manager.
+
+    Returns:
+        float: Trial score (metric value).
+
+    Raises:
+        optuna.TrialPruned: If trial is pruned.
+        Exception: If training fails.
+    """
     trial_best_score = 0.0
     classifier_config = None
 
@@ -529,30 +765,28 @@ def objective(
             train_dataloader,
         )
 
+        # Initialize early stopping manager - replaces unused patience variables
+        early_stopping = EarlyStoppingManager(
+            patience=max(3, min(8, trial.number // 2)),
+            min_epochs=max(5, model_config.num_epochs // 4),
+            improvement_threshold=0.001,
+            smoothing_window=3,
+            trend_window=5,
+        )
+
         # Training loop
         trial_best_state = None
-        patience = max(3, min(8, trial.number // 2))
-        min_epochs = max(5, model_config.num_epochs // 3)
-        no_improve_count = 0
-        last_score = float("-inf")
 
         # Main training loop
         for epoch in range(model_config.num_epochs):
             try:
-                # Train for one epoch
                 trainer.train_epoch(train_dataloader, optimizer, scheduler)
-
-                # Evaluate
                 score, metrics = trainer.evaluate(val_dataloader)
-
-                # Report to Optuna
                 trial.report(score, epoch)
 
-                # Check for improvement
+                # Check for improvement and update best state
                 if score > trial_best_score:
-                    no_improve_count = 0
                     trial_best_score = score
-                    last_score = score
                     trial_best_state = {
                         "model_state": {
                             k: v.cpu().clone() for k, v in model.state_dict().items()
@@ -564,21 +798,49 @@ def objective(
                         "epoch": epoch,
                         "metrics": metrics,
                     }
-                else:
-                    no_improve_count += 1
 
                 # Early stopping checks
-                should_stop = False
-                if epoch >= min_epochs:
-                    if score < last_score * 0.8:  # Significant regression
-                        should_stop = True
-                    elif no_improve_count >= patience:  # No improvement
-                        should_stop = True
-                    elif trial.should_prune():  # Optuna wants to prune
-                        should_stop = True
-
+                should_stop, reason = early_stopping.should_stop(epoch, score)
                 if should_stop:
+                    logger.info("Early stopping triggered: %s", reason)
                     break
+
+                # Optuna pruning check
+                if trial.should_prune():
+                    raise optuna.TrialPruned(f"Trial pruned at epoch {epoch}")
+
+                # Check if we should perform PBT operations
+                if pbt_manager and pbt_manager.should_explore(score):
+                    # Either exploit or explore
+                    if random.random() < 0.5:
+                        new_params = pbt_manager.exploit(score, trial.params)
+                        if new_params:
+                            # Update trial parameters
+                            for key, value in new_params.items():
+                                trial.params[key] = value
+                            # Recreate optimizer with new parameters
+                            optimizer_config = get_optimizer_config(
+                                trial,
+                                optimizer_name,
+                                new_params.get(
+                                    "lr"
+                                ),  # Changed from learning_rate to lr
+                            )
+                            optimizer = create_optimizer(
+                                optimizer_name, model.parameters(), **optimizer_config
+                            )
+                    else:
+                        # Explore by perturbing current parameters
+                        new_params = pbt_manager.explore(trial.params)
+                        trial.params.update(new_params)
+                        optimizer_config = get_optimizer_config(
+                            trial,
+                            optimizer_name,
+                            new_params.get("lr"),  # Changed from learning_rate to lr
+                        )
+                        optimizer = create_optimizer(
+                            optimizer_name, model.parameters(), **optimizer_config
+                        )
 
             except Exception as e:
                 logger.error("Error in epoch %d: %s", epoch, str(e))
@@ -631,14 +893,16 @@ def save_trial_callback(
         ):
             study.set_user_attr("best_value", trial.value)
             model_config.best_trials_dir.mkdir(exist_ok=True, parents=True)
+            # Ensure model_info exists
+            model_info = best_model_info.get("model_info", {})
             best_trial_info = {
                 "trial_number": trial.number,
                 "params": trial.params,
                 "value": trial.value,
                 "study_name": trial_study_name,
-                "best_model_score": best_model_info["score"]
-                if best_model_info["model_info"]
-                else None,
+                "best_model_score": best_model_info["score"],
+                "model_state": model_info.get("model_state"),
+                "config": model_info.get("config", {}),
             }
             torch.save(
                 best_trial_info,

@@ -4,7 +4,6 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
-from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from tqdm.auto import tqdm
 

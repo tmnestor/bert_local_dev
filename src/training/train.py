@@ -25,7 +25,15 @@ logger = get_logger(__name__)  # Change to get_logger
 
 
 def _log_best_configuration(best_file: Path, best_value: float) -> None:
-    """Log information about the best configuration"""
+    """Logs information about the best configuration found.
+
+    Args:
+        best_file (Path): Path to the best configuration file.
+        best_value (float): Best metric value achieved.
+
+    Note:
+        This is an internal helper function for logging purposes.
+    """
     logger.info("Loaded best configuration from %s", best_file)
     logger.info("Best trial score: %.4f", best_value)
 
@@ -33,7 +41,22 @@ def _log_best_configuration(best_file: Path, best_value: float) -> None:
 def load_best_configuration(
     best_trials_dir: Path, study_name: str = None
 ) -> Optional[dict]:
-    """Load best model configuration from optimization results"""
+    """Loads the best model configuration from optimization results.
+
+    Searches through optimization trial results to find the best performing
+    configuration based on the evaluation metric.
+
+    Args:
+        best_trials_dir (Path): Directory containing trial results.
+        study_name (str, optional): Name of the study to filter results.
+
+    Returns:
+        Optional[dict]: Best configuration dictionary if found, None otherwise.
+
+    Raises:
+        FileNotFoundError: If trial files cannot be found.
+        RuntimeError: If trial files cannot be loaded.
+    """
     pattern = f"best_trial_{study_name or '*'}.pt"
     trial_files = list(best_trials_dir.glob(pattern))
 
@@ -62,77 +85,83 @@ def load_best_configuration(
         # Return the actual configuration
         if "params" in best_trial:
             clf_config = best_trial["params"]
-            # Add default values for missing configuration keys
-            arch_type = clf_config.get("architecture_type", "standard")
-
-            if arch_type == "standard":
-                config.update(
-                    {
-                        "num_layers": config.get("std/num_layers", 2),
-                        "hidden_dim": config.get("std/hidden_dim", 256),
-                        "activation": config.get("std/activation", "gelu"),
-                        "regularization": config.get("std/regularization", "dropout"),
-                        "dropout_rate": config.get("std/dropout_rate", 0.1),
-                        "cls_pooling": config.get("cls_pooling", True),
-                    }
-                )
-            else:  # plane_resnet
-                config.update(
-                    {
-                        "architecture_type": "plane_resnet",
-                        "num_planes": config.get("plane/num_planes", 8),
-                        "plane_width": config.get("plane/width", 128),
-                        "cls_pooling": config.get("cls_pooling", True),
-                    }
-                )
-            return config
+            # Add any missing defaults
+            return {
+                "hidden_dim": clf_config.get("hidden_dim", CLASSIFIER_DEFAULTS["hidden_dims"]),
+                "activation": clf_config.get("activation", CLASSIFIER_DEFAULTS["activation"]),
+                "dropout_rate": clf_config.get("dropout_rate", CLASSIFIER_DEFAULTS["dropout_rate"]),
+                "lr": clf_config.get("lr", CONFIG["optimizer"]["lr"]),
+                "optimizer": clf_config.get("optimizer", CONFIG["optimizer"]["optimizer_choice"]),
+                "weight_decay": clf_config.get("weight_decay", CONFIG["optimizer"]["weight_decay"]),
+                "warmup_ratio": clf_config.get("warmup_ratio", CONFIG["optimizer"]["warmup_ratio"])
+            }
 
     logger.info("\nNo previous optimization found. Using default configuration")
     return None
 
 
-def train_model(model_config: ModelConfig, clf_config: dict = None):
-    """Train a model with fixed or optimized configuration"""
+def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
+    """Trains a BERT classifier model with given configuration.
+
+    This function handles the complete training process including:
+    - Data loading and preprocessing
+    - Model initialization
+    - Optimizer and scheduler setup
+    - Training loop with validation
+    - Model checkpointing
+    - Progress tracking and logging
+
+    Args:
+        model_config (ModelConfig): Configuration for model training parameters.
+        clf_config (dict, optional): Classifier-specific configuration. If None,
+            uses defaults from config.yml.
+
+    Raises:
+        ValueError: If configuration validation fails.
+        RuntimeError: If training encounters an error.
+    """
     if clf_config is None:
         # Use default configuration from config.yml
-        clf_config = CLASSIFIER_DEFAULTS.copy()
-        # Map hidden_dims to hidden_dim for compatibility
-        if "hidden_dims" in clf_config and "hidden_dim" not in clf_config:
-            clf_config["hidden_dim"] = clf_config["hidden_dims"]
+        clf_config = {
+            "hidden_dim": CLASSIFIER_DEFAULTS["hidden_dims"],
+            "activation": CLASSIFIER_DEFAULTS["activation"],
+            "dropout_rate": CLASSIFIER_DEFAULTS["dropout_rate"],
+            "optimizer": CONFIG["optimizer"]["optimizer_choice"],
+            "lr": CONFIG["optimizer"]["lr"],
+            "weight_decay": CONFIG["optimizer"]["weight_decay"],
+            "warmup_ratio": CONFIG["optimizer"]["warmup_ratio"]
+        }
 
-    # Use optimizer configuration from config.yml
-    optimizer_config = CONFIG['optimizer']
-    optimizer_name = optimizer_config.get('optimizer_choice', 'rmsprop')
+    # Single optimizer configuration section
+    optimizer_name = clf_config.get("optimizer", "adamw")
     optimizer_params = {
-        'lr': optimizer_config.get('lr', 2.05e-4),  # Changed from learning_rate
-        'weight_decay': optimizer_config.get('weight_decay', 2.22e-8),
+        "lr": clf_config.get("lr", model_config.learning_rate),
+        "weight_decay": clf_config.get("weight_decay", 0.01),
     }
 
     # Add optimizer-specific parameters
-    if optimizer_name == 'rmsprop':
+    if optimizer_name == "rmsprop":
         optimizer_params.update({
-            'momentum': optimizer_config.get('momentum', 0.367),
-            'alpha': optimizer_config.get('alpha', 0.864),
+            "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
+            "alpha": clf_config.get("alpha", CONFIG["optimizer"]["alpha"])
         })
-    elif optimizer_name == 'sgd':
+    elif optimizer_name == "sgd":
         optimizer_params.update({
-            'momentum': optimizer_config.get('momentum', 0.9),
-            'nesterov': optimizer_config.get('nesterov', True),
+            "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
+            "nesterov": clf_config.get("nesterov", CONFIG["optimizer"]["nesterov"])
         })
-    elif optimizer_name == 'adamw':
+    elif optimizer_name == "adamw":
+        # Ensure betas is a tuple of floats
+        betas = CONFIG["optimizer"]["betas"]
+        if isinstance(betas, (list, tuple)):
+            betas = tuple(float(x) for x in betas)
         optimizer_params.update({
-            'betas': optimizer_config.get('betas', (0.9, 0.999)),  # Use betas tuple directly
-            'eps': optimizer_config.get('eps', 1e-8),
+            "betas": betas,
+            "eps": float(clf_config.get("eps", CONFIG["optimizer"]["eps"]))
         })
 
     # Update classifier config with optimizer settings
-    clf_config.update({
-        'lr': optimizer_config['lr'],  # Changed from learning_rate
-        'batch_size': model_config.batch_size,
-        'optimizer': optimizer_name,
-        'optimizer_config': optimizer_params,
-        'warmup_ratio': optimizer_config.get('warmup_ratio', 0.2),
-    })
+    clf_config["optimizer_config"] = optimizer_params
 
     # Load data and set num_classes
     train_texts, val_texts, train_labels, val_labels, label_encoder = (
@@ -163,31 +192,6 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
         model_config.bert_model_name, model_config.num_classes, clf_config
     )
     trainer = Trainer(model, model_config)
-
-    # Use optimizer factory if optimizer is specified in config
-    optimizer_name = clf_config.get("optimizer", "adamw")
-    # Build optimizer params based on optimizer type
-    optimizer_params = {
-        "lr": clf_config.get("lr", model_config.learning_rate),
-        "weight_decay": clf_config.get("weight_decay", 0.01),
-    }
-
-    # Add optimizer-specific parameters
-    if optimizer_name == 'rmsprop':
-        optimizer_params.update({
-            'momentum': clf_config.get('momentum', 0.367),
-            'alpha': clf_config.get('alpha', 0.864),
-        })
-    elif optimizer_name == 'sgd':
-        optimizer_params.update({
-            'momentum': clf_config.get('momentum', 0.9),
-            'nesterov': clf_config.get('nesterov', True),
-        })
-    elif optimizer_name == 'adamw':
-        optimizer_params.update({
-            'betas': clf_config.get('betas', (0.9, 0.999)),
-            'eps': clf_config.get('eps', 1e-8),
-        })
 
     optimizer = create_optimizer(optimizer_name, model.parameters(), **optimizer_params)
 
@@ -258,6 +262,10 @@ def train_model(model_config: ModelConfig, clf_config: dict = None):
             batch_pbar.close()
 
     logger.info("\nTraining completed. Best %s: %.4f", model_config.metric, best_score)
+    if model_config.verbosity > 1:  # Add detailed path logging for debug level
+        logger.info("Model saved to: %s", model_config.model_save_path.absolute())
+        logger.info("Model file exists: %s", model_config.model_save_path.exists())
+        logger.info("Model file size: %.2f MB", model_config.model_save_path.stat().st_size / (1024 * 1024))
 
 
 def parse_args() -> argparse.ArgumentParser:

@@ -10,10 +10,38 @@ T = TypeVar('T', bound='BaseConfig')
 
 @dataclass
 class BaseConfig:
-    """Base configuration class with validation and serialization support"""
+    """Base configuration class providing validation and serialization.
     
+    This class serves as the foundation for all configuration classes in the project,
+    providing common functionality for validation, serialization, and path management.
+    
+    The class uses Python's dataclass functionality combined with type hints for 
+    automatic validation and serialization of configuration parameters.
+    
+    Attributes:
+        No default attributes - this is a base class
+        
+    Methods:
+        validate(): Validates all configuration parameters
+        merge(other): Merges another config into this one
+        to_dict(): Converts config to dictionary
+        from_dict(config_dict): Creates instance from dictionary
+        load_yaml(path): Loads config from YAML file
+        load_json(path): Loads config from JSON file
+        save_yaml(path): Saves config as YAML file
+        save_json(path): Saves config as JSON file
+    """
+
     def validate(self) -> None:
-        """Validate configuration parameters"""
+        """Validates all configuration parameters.
+        
+        Performs type checking and validation for all fields in the configuration.
+        Validates paths exist for file fields and creates directories for directory fields.
+        
+        Raises:
+            ValueError: If any configuration parameter is invalid
+            FileNotFoundError: If required files don't exist
+        """
         type_hints = get_type_hints(self.__class__)
         for field in fields(self):
             value = getattr(self, field.name)
@@ -21,7 +49,16 @@ class BaseConfig:
             self._validate_field(field, value, field_type)
 
     def _validate_field(self, field: Field, value: Any, field_type: Any) -> None:
-        """Validate a single field"""
+        """Validates a single configuration field.
+        
+        Args:
+            field: Field descriptor from dataclass
+            value: Value to validate
+            field_type: Expected type of the field
+            
+        Raises:
+            ValueError: If field validation fails
+        """
         # Skip validation for explicitly optional fields that are None
         if value is None and self._is_optional(field_type):
             return

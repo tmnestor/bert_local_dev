@@ -26,6 +26,31 @@ VALID_METRICS = {"accuracy", "f1", "precision", "recall"}
 
 @dataclass
 class ModelConfig(BaseConfig):
+    """Configuration for model training and optimization.
+    
+    This class handles all configuration parameters needed for model training,
+    including paths, hyperparameters, and system settings. It provides validation,
+    command line argument parsing, and configuration file loading.
+    
+    Attributes:
+        bert_model_name (str): Path or name of pre-trained BERT model
+        num_classes (Optional[int]): Number of output classes
+        max_seq_len (int): Maximum sequence length for tokenization
+        batch_size (int): Training batch size
+        num_epochs (int): Number of training epochs
+        learning_rate (float): Learning rate for optimization
+        device (str): Device to use ('cpu' or 'cuda')
+        dropout_rate (float): Dropout rate for regularization
+        metric (str): Primary metric for evaluation
+        metrics (List[str]): All metrics to compute
+        data_file (Path): Path to input data file
+        n_trials (Optional[int]): Number of optimization trials
+        n_experiments (int): Number of experiments to run
+        trials_per_experiment (Optional[int]): Trials per experiment
+        sampler (str): Optuna sampler type
+        output_root (Path): Root directory for outputs
+        verbosity (int): Logging verbosity level
+    """
     # Class-level defaults for argparse - update to match new structure
     DEFAULT_DATA_FILE = Path(DATA_DEFAULTS["default_file"])
     DEFAULT_NUM_EPOCHS = MODEL_DEFAULTS["num_epochs"]
@@ -175,7 +200,20 @@ class ModelConfig(BaseConfig):
 
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
-        """Add ModelConfig arguments to an ArgumentParser"""
+        """Adds command line arguments to an ArgumentParser.
+        
+        Args:
+            parser: ArgumentParser instance to extend
+            
+        The arguments are grouped into:
+            - Training Configuration
+            - Model Configuration
+            - System Configuration
+            - File Paths
+            - Experiment Configuration
+            - Directory Configuration
+            - Logging
+        """
         # Training settings
         training = parser.add_argument_group("Training Configuration")
         training.add_argument(
@@ -390,8 +428,18 @@ class ModelConfig(BaseConfig):
 
 @dataclass
 class ValidationConfig(ModelConfig):
-    """Configuration for model validation."""
-
+    """Configuration for model validation.
+    
+    Extends ModelConfig with additional parameters specific to model validation.
+    
+    Attributes:
+        test_file (Optional[Path]): Path to test data file
+        model_path (Optional[Path]): Path to model checkpoint
+        output_dir (Path): Directory for validation outputs
+        threshold (float): Classification threshold
+        metrics (List[str]): Metrics to compute
+        save_predictions (bool): Whether to save predictions
+    """
     test_file: Optional[Path] = field(default=None)
     model_path: Optional[Path] = field(default=None)
     output_dir: Path = field(init=False)  # Add this field
@@ -543,8 +591,15 @@ class ValidationConfig(ModelConfig):
 
 @dataclass
 class EvaluationConfig(ModelConfig):
-    """Configuration for model evaluation"""
-
+    """Configuration for model evaluation.
+    
+    Extends ModelConfig with parameters specific to model evaluation.
+    
+    Attributes:
+        best_model (Path): Path to best model checkpoint
+        output_dir (Path): Directory for evaluation outputs
+        metrics (List[str]): Metrics to compute
+    """
     best_model: Path = field(default=None)
     output_dir: Path = field(init=False)
     metrics: List[str] = field(
@@ -617,7 +672,18 @@ class EvaluationConfig(ModelConfig):
 def load_best_configuration(
     best_trials_dir: Path, study_name: str = None
 ) -> Optional[dict]:
-    """Load best model configuration from optimization results"""
+    """Loads best model configuration from optimization results.
+    
+    Args:
+        best_trials_dir: Directory containing optimization trial results
+        study_name: Optional name to filter trials by
+        
+    Returns:
+        Optional[dict]: Configuration dictionary from best trial or None if not found
+        
+    Raises:
+        RuntimeError: If trial files cannot be loaded
+    """
     pattern = f"best_trial_{study_name or '*'}.pt"
     trial_files = list(best_trials_dir.glob(pattern))
 
