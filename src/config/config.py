@@ -118,7 +118,7 @@ class ModelConfig(BaseConfig):
         config_file = next((p for p in config_paths if p.exists()), None)
 
         try:
-            if config_file:
+            if (config_file):
                 logger.info("Loading directory configuration from: %s", config_file)
                 with open(config_file, encoding="utf-8") as f:
                     dir_config = yaml.safe_load(f)
@@ -362,6 +362,16 @@ class ModelConfig(BaseConfig):
     def from_args(cls, args: argparse.Namespace) -> "ModelConfig":
         """Create config from argparse namespace"""
         config_dict = {f.name: getattr(args, f.name, None) for f in fields(cls)}
+        
+        # Debug log the data file being used
+        logger.debug("Data file from CLI args: %s", getattr(args, "data_file", None))
+        logger.debug("Default data file: %s", cls.DEFAULT_DATA_FILE)
+        
+        # Ensure data_file from CLI takes precedence
+        if getattr(args, "data_file", None) is not None:
+            config_dict["data_file"] = args.data_file
+            logger.info("Using data file from CLI: %s", args.data_file)
+        
         return cls.from_dict(config_dict)
 
     def validate(self) -> None:

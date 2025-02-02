@@ -12,7 +12,7 @@ model_paths:
 
 # Data paths
 data:
-  default_file: bbc-text.csv  # Just the filename, will be relative to data_dir
+  default_file: bbc-text-10.csv  # Just the filename, will be relative to data_dir
 
 # Model defaults
 model:

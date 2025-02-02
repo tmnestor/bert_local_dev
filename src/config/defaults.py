@@ -1,9 +1,11 @@
 """Default configuration values."""
 
 from pathlib import Path
-
+import logging
 import yaml
 
+# Add logger at module level
+logger = logging.getLogger(__name__)
 
 def load_config(config_path: Path = None) -> dict:
     """Load configuration from YAML file."""
@@ -39,6 +41,12 @@ def load_config(config_path: Path = None) -> dict:
                 # Remove parentheses and split
                 beta_str = beta_str.strip("()").split(",")
                 config["optimizer"]["betas"] = tuple(float(x.strip()) for x in beta_str)
+
+    # Update the data default_file if it exists in config
+    if "data" in config and "default_file" in config["data"]:
+        logger.info("Using data file from config: %s", config["data"]["default_file"])
+    else:
+        config["data"] = {"default_file": "bbc-text.csv"}
 
     return config
 

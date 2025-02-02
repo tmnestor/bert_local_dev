@@ -1,27 +1,39 @@
 """Data loading utilities."""
 
 from typing import List, Tuple, Union, Optional
-
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+import logging
 
 from ..config.config import ModelConfig
 from .dataset import TextClassificationDataset
 from .splitter import DataSplitter
 from ..utils.logging_manager import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def load_and_preprocess_data(
     config: ModelConfig, validation_mode: bool = False
 ) -> Tuple:
     """Load and preprocess data using DataSplitter."""
-    # Create data splitter
-    splitter = DataSplitter(config.data_dir)
+    logger.debug("Loading data:")
+    logger.debug("  Data path: %s", config.data_file)
+    logger.debug("  Absolute path: %s", config.data_file.absolute())
+    
+    # Load CSV file
+    try:
+        df = pd.read_csv(config.data_file)
+        logger.debug("  CSV file loaded successfully")
+        logger.debug("  Number of rows: %d", len(df))
+    except Exception as e:
+        raise RuntimeError(f"Failed to load data file: {str(e)}") from e
 
-    # Load splits
-    splits = splitter.load_splits()
+    # Create data splitter and pass the loaded dataframe
+    splitter = DataSplitter(config.data_dir)
+    splits = splitter.load_splits(df)
 
     # Log split information
     logger.info("\nData Split Information:")
