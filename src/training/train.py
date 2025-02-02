@@ -87,13 +87,25 @@ def load_best_configuration(
             clf_config = best_trial["params"]
             # Add any missing defaults
             return {
-                "hidden_dim": clf_config.get("hidden_dim", CLASSIFIER_DEFAULTS["hidden_dims"]),
-                "activation": clf_config.get("activation", CLASSIFIER_DEFAULTS["activation"]),
-                "dropout_rate": clf_config.get("dropout_rate", CLASSIFIER_DEFAULTS["dropout_rate"]),
+                "hidden_dim": clf_config.get(
+                    "hidden_dim", CLASSIFIER_DEFAULTS["hidden_dims"]
+                ),
+                "activation": clf_config.get(
+                    "activation", CLASSIFIER_DEFAULTS["activation"]
+                ),
+                "dropout_rate": clf_config.get(
+                    "dropout_rate", CLASSIFIER_DEFAULTS["dropout_rate"]
+                ),
                 "lr": clf_config.get("lr", CONFIG["optimizer"]["lr"]),
-                "optimizer": clf_config.get("optimizer", CONFIG["optimizer"]["optimizer_choice"]),
-                "weight_decay": clf_config.get("weight_decay", CONFIG["optimizer"]["weight_decay"]),
-                "warmup_ratio": clf_config.get("warmup_ratio", CONFIG["optimizer"]["warmup_ratio"])
+                "optimizer": clf_config.get(
+                    "optimizer", CONFIG["optimizer"]["optimizer_choice"]
+                ),
+                "weight_decay": clf_config.get(
+                    "weight_decay", CONFIG["optimizer"]["weight_decay"]
+                ),
+                "warmup_ratio": clf_config.get(
+                    "warmup_ratio", CONFIG["optimizer"]["warmup_ratio"]
+                ),
             }
 
     logger.info("\nNo previous optimization found. Using default configuration")
@@ -129,7 +141,7 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
             "optimizer": CONFIG["optimizer"]["optimizer_choice"],
             "lr": CONFIG["optimizer"]["lr"],
             "weight_decay": CONFIG["optimizer"]["weight_decay"],
-            "warmup_ratio": CONFIG["optimizer"]["warmup_ratio"]
+            "warmup_ratio": CONFIG["optimizer"]["warmup_ratio"],
         }
 
     # Single optimizer configuration section
@@ -141,24 +153,30 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
 
     # Add optimizer-specific parameters
     if optimizer_name == "rmsprop":
-        optimizer_params.update({
-            "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
-            "alpha": clf_config.get("alpha", CONFIG["optimizer"]["alpha"])
-        })
+        optimizer_params.update(
+            {
+                "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
+                "alpha": clf_config.get("alpha", CONFIG["optimizer"]["alpha"]),
+            }
+        )
     elif optimizer_name == "sgd":
-        optimizer_params.update({
-            "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
-            "nesterov": clf_config.get("nesterov", CONFIG["optimizer"]["nesterov"])
-        })
+        optimizer_params.update(
+            {
+                "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
+                "nesterov": clf_config.get("nesterov", CONFIG["optimizer"]["nesterov"]),
+            }
+        )
     elif optimizer_name == "adamw":
         # Ensure betas is a tuple of floats
         betas = CONFIG["optimizer"]["betas"]
         if isinstance(betas, (list, tuple)):
             betas = tuple(float(x) for x in betas)
-        optimizer_params.update({
-            "betas": betas,
-            "eps": float(clf_config.get("eps", CONFIG["optimizer"]["eps"]))
-        })
+        optimizer_params.update(
+            {
+                "betas": betas,
+                "eps": float(clf_config.get("eps", CONFIG["optimizer"]["eps"])),
+            }
+        )
 
     # Update classifier config with optimizer settings
     clf_config["optimizer_config"] = optimizer_params
@@ -196,11 +214,11 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
     optimizer = create_optimizer(optimizer_name, model.parameters(), **optimizer_params)
 
     total_steps = len(train_dataloader) * model_config.num_epochs
-    warmup_steps = int(total_steps * clf_config['warmup_ratio'])  # Get from clf_config instead of model_config
+    warmup_steps = int(
+        total_steps * clf_config["warmup_ratio"]
+    )  # Get from clf_config instead of model_config
     scheduler = get_linear_schedule_with_warmup(
-        optimizer, 
-        num_warmup_steps=warmup_steps, 
-        num_training_steps=total_steps
+        optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps
     )
 
     # Initialize progress bars using utility function
@@ -265,7 +283,10 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
     if model_config.verbosity > 1:  # Add detailed path logging for debug level
         logger.info("Model saved to: %s", model_config.model_save_path.absolute())
         logger.info("Model file exists: %s", model_config.model_save_path.exists())
-        logger.info("Model file size: %.2f MB", model_config.model_save_path.stat().st_size / (1024 * 1024))
+        logger.info(
+            "Model file size: %.2f MB",
+            model_config.model_save_path.stat().st_size / (1024 * 1024),
+        )
 
 
 def parse_args() -> argparse.ArgumentParser:

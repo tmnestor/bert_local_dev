@@ -27,11 +27,11 @@ VALID_METRICS = {"accuracy", "f1", "precision", "recall"}
 @dataclass
 class ModelConfig(BaseConfig):
     """Configuration for model training and optimization.
-    
+
     This class handles all configuration parameters needed for model training,
     including paths, hyperparameters, and system settings. It provides validation,
     command line argument parsing, and configuration file loading.
-    
+
     Attributes:
         bert_model_name (str): Path or name of pre-trained BERT model
         num_classes (Optional[int]): Number of output classes
@@ -51,6 +51,7 @@ class ModelConfig(BaseConfig):
         output_root (Path): Root directory for outputs
         verbosity (int): Logging verbosity level
     """
+
     # Class-level defaults for argparse - update to match new structure
     DEFAULT_DATA_FILE = Path(DATA_DEFAULTS["default_file"])
     DEFAULT_NUM_EPOCHS = MODEL_DEFAULTS["num_epochs"]
@@ -72,7 +73,9 @@ class ModelConfig(BaseConfig):
     max_seq_len: int = MODEL_DEFAULTS["max_seq_len"]
     batch_size: int = MODEL_DEFAULTS["batch_size"]
     num_epochs: int = MODEL_DEFAULTS["num_epochs"]
-    learning_rate: float = OPTIMIZER_DEFAULTS["lr"]  # Changed source but keep field name for now
+    learning_rate: float = OPTIMIZER_DEFAULTS[
+        "lr"
+    ]  # Changed source but keep field name for now
     device: str = MODEL_DEFAULTS["device"]
     dropout_rate: float = CLASSIFIER_DEFAULTS[
         "dropout_rate"
@@ -115,7 +118,7 @@ class ModelConfig(BaseConfig):
         config_file = next((p for p in config_paths if p.exists()), None)
 
         try:
-            if (config_file):
+            if config_file:
                 logger.info("Loading directory configuration from: %s", config_file)
                 with open(config_file, encoding="utf-8") as f:
                     dir_config = yaml.safe_load(f)
@@ -201,10 +204,10 @@ class ModelConfig(BaseConfig):
     @classmethod
     def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
         """Adds command line arguments to an ArgumentParser.
-        
+
         Args:
             parser: ArgumentParser instance to extend
-            
+
         The arguments are grouped into:
             - Training Configuration
             - Model Configuration
@@ -386,9 +389,9 @@ class ModelConfig(BaseConfig):
             raise ValueError("batch_size must be positive")
         if self.num_epochs < 1:
             raise ValueError("num_epochs must be positive")
-        if not (0.0 < self.learning_rate < 1.0):
+        if not 0.0 < self.learning_rate < 1.0:
             raise ValueError("learning_rate must be between 0 and 1")
-        if not (0.0 <= self.dropout_rate <= 1.0):  # Changed from hidden_dropout
+        if not 0.0 <= self.dropout_rate <= 1.0:  # Changed from hidden_dropout
             raise ValueError("dropout_rate must be between 0 and 1")
 
     def _validate_system_params(self) -> None:
@@ -429,9 +432,9 @@ class ModelConfig(BaseConfig):
 @dataclass
 class ValidationConfig(ModelConfig):
     """Configuration for model validation.
-    
+
     Extends ModelConfig with additional parameters specific to model validation.
-    
+
     Attributes:
         test_file (Optional[Path]): Path to test data file
         model_path (Optional[Path]): Path to model checkpoint
@@ -440,6 +443,7 @@ class ValidationConfig(ModelConfig):
         metrics (List[str]): Metrics to compute
         save_predictions (bool): Whether to save predictions
     """
+
     test_file: Optional[Path] = field(default=None)
     model_path: Optional[Path] = field(default=None)
     output_dir: Path = field(init=False)  # Add this field
@@ -592,14 +596,15 @@ class ValidationConfig(ModelConfig):
 @dataclass
 class EvaluationConfig(ModelConfig):
     """Configuration for model evaluation.
-    
+
     Extends ModelConfig with parameters specific to model evaluation.
-    
+
     Attributes:
         best_model (Path): Path to best model checkpoint
         output_dir (Path): Directory for evaluation outputs
         metrics (List[str]): Metrics to compute
     """
+
     best_model: Path = field(default=None)
     output_dir: Path = field(init=False)
     metrics: List[str] = field(
@@ -673,14 +678,14 @@ def load_best_configuration(
     best_trials_dir: Path, study_name: str = None
 ) -> Optional[dict]:
     """Loads best model configuration from optimization results.
-    
+
     Args:
         best_trials_dir: Directory containing optimization trial results
         study_name: Optional name to filter trials by
-        
+
     Returns:
         Optional[dict]: Configuration dictionary from best trial or None if not found
-        
+
     Raises:
         RuntimeError: If trial files cannot be loaded
     """

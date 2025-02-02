@@ -6,21 +6,22 @@ from typing import Any, Dict, Optional, Type, TypeVar, Union, get_type_hints
 
 import yaml
 
-T = TypeVar('T', bound='BaseConfig')
+T = TypeVar("T", bound="BaseConfig")
+
 
 @dataclass
 class BaseConfig:
     """Base configuration class providing validation and serialization.
-    
+
     This class serves as the foundation for all configuration classes in the project,
     providing common functionality for validation, serialization, and path management.
-    
-    The class uses Python's dataclass functionality combined with type hints for 
+
+    The class uses Python's dataclass functionality combined with type hints for
     automatic validation and serialization of configuration parameters.
-    
+
     Attributes:
         No default attributes - this is a base class
-        
+
     Methods:
         validate(): Validates all configuration parameters
         merge(other): Merges another config into this one
@@ -34,10 +35,10 @@ class BaseConfig:
 
     def validate(self) -> None:
         """Validates all configuration parameters.
-        
+
         Performs type checking and validation for all fields in the configuration.
         Validates paths exist for file fields and creates directories for directory fields.
-        
+
         Raises:
             ValueError: If any configuration parameter is invalid
             FileNotFoundError: If required files don't exist
@@ -50,35 +51,35 @@ class BaseConfig:
 
     def _validate_field(self, field: Field, value: Any, field_type: Any) -> None:
         """Validates a single configuration field.
-        
+
         Args:
             field: Field descriptor from dataclass
             value: Value to validate
             field_type: Expected type of the field
-            
+
         Raises:
             ValueError: If field validation fails
         """
         # Skip validation for explicitly optional fields that are None
         if value is None and self._is_optional(field_type):
             return
-            
+
         if value is None and not self._is_optional(field_type):
             raise ValueError(f"{field.name} cannot be None")
-            
+
         if isinstance(value, Path):
             self._validate_path_field(field.name, value)
-            
+
         if hasattr(self, f"_validate_{field.name}"):
             validator = getattr(self, f"_validate_{field.name}")
             validator(value)
 
     def _validate_path_field(self, name: str, path: Path) -> None:
         """Validate path fields"""
-        if name.endswith('_file'):
+        if name.endswith("_file"):
             if not path.exists():
                 raise FileNotFoundError(f"{name} not found: {path}")
-        elif name.endswith('_dir'):
+        elif name.endswith("_dir"):
             path.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -89,7 +90,7 @@ class BaseConfig:
         args = getattr(field_type, "__args__", ())
         return origin is Optional or (origin is Union and type(None) in args)
 
-    def merge(self, other: 'BaseConfig') -> None:
+    def merge(self, other: "BaseConfig") -> None:
         """Merge another config into this one"""
         for field in fields(other):
             value = getattr(other, field.name)
@@ -107,13 +108,13 @@ class BaseConfig:
     @classmethod
     def load_yaml(cls: Type[T], path: Path) -> T:
         """Load config from YAML file"""
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             return cls.from_dict(yaml.safe_load(f))
 
     @classmethod
     def load_json(cls: Type[T], path: Path) -> T:
         """Load config from JSON file"""
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -122,10 +123,10 @@ class BaseConfig:
 
     def save_yaml(self, path: Path) -> None:
         """Save config as YAML file"""
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(self.to_dict(), f)
 
     def save_json(self, path: Path) -> None:
         """Save config as JSON file"""
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)

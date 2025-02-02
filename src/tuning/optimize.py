@@ -8,7 +8,9 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterator, List, Optional, Tuple
 
+
 import numpy as np
+import psutil
 import optuna
 import torch
 from optuna._experimental import ExperimentalWarning
@@ -239,7 +241,7 @@ def run_optimization(
         logger.info("Number of trials: %s", n_trials or model_config.n_trials)
         logger.info("\nLoading data...")
 
-    # Load data silently
+    # Load data - Fix unpacking by capturing all returned values
     train_texts, val_texts, train_labels, val_labels, label_encoder = (
         load_and_preprocess_data(model_config)
     )
@@ -247,8 +249,13 @@ def run_optimization(
     if model_config.num_classes is None:
         model_config.num_classes = len(label_encoder.classes_)
 
+    # Combine train and val sets for optimization
     texts = train_texts + val_texts
     labels = train_labels + val_labels
+
+    logger.info(
+        "Loaded %d total samples (%d classes)", len(texts), model_config.num_classes
+    )
 
     # Initialize progress bar
     trial_pbar = tqdm(
@@ -427,8 +434,6 @@ class MemoryManager:
         self.batch_size_limits = {"min": 8, "max": 64, "current": 32}
 
     def check_memory(self) -> float:
-        import psutil
-
         return psutil.Process().memory_percent()
 
     def adjust_batch_size(self, current_memory: float) -> int:
@@ -743,7 +748,7 @@ def objective(
                 trial.number, classifier_config, None, model_config.n_trials
             )
 
-        # Create train/val split
+        # Create train/val split here for each trial
         train_texts, val_texts, train_labels, val_labels = train_test_split(
             texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
         )
@@ -802,7 +807,8 @@ def objective(
                 # Early stopping checks
                 should_stop, reason = early_stopping.should_stop(epoch, score)
                 if should_stop:
-                    logger.info("Early stopping triggered: %s", reason)
+                    # Add newline before early stopping message
+                    logger.info("\nEarly stopping triggered: %s", reason)
                     break
 
                 # Optuna pruning check
