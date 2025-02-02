@@ -249,9 +249,14 @@ def run_optimization(
     if model_config.num_classes is None:
         model_config.num_classes = len(label_encoder.classes_)
 
-    # Combine train and val sets for optimization
-    texts = train_texts + val_texts
-    labels = train_labels + val_labels
+    # Fix list concatenation using extend or concatenate
+    texts = []
+    texts.extend(train_texts)
+    texts.extend(val_texts)
+    
+    labels = []
+    labels.extend(train_labels)
+    labels.extend(val_labels)
 
     logger.info(
         "Loaded %d total samples (%d classes)", len(texts), model_config.num_classes
