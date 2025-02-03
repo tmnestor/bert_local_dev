@@ -1,122 +1,138 @@
 # BERT Text Classification Framework
 
-A robust framework for BERT-based text classification with automated optimization, comprehensive evaluation, and flexible configuration management.
+Advanced BERT fine-tuning framework featuring Population Based Training (PBT) and comprehensive hyperparameter optimization.
 
 ## Key Features
 
-- **Robust Configuration System**: Multi-level configuration with validation and inheritance
-- **Advanced Optimization**: Optuna-based tuning with multiple sampling strategies
-- **Flexible Architecture**: Configurable classifier head with dynamic layer sizing
-- **Comprehensive Evaluation**: Multi-metric assessment and result analysis
-- **Production-Ready**: Error handling, logging, and progress tracking
+### Population Based Training (PBT)
+- Dynamic hyperparameter adaptation during training
+- Population of 4 parallel training runs 
+- Adaptive strategies:
+  - Exploit: Copy parameters from better performers (50% chance)
+  - Explore: Perturb parameters by random factors (0.8-1.2)
+- Parameters optimized:
+  ```python
+  OPTIMIZED_PARAMS = [
+      "lr",                # Learning rate
+      "weight_decay",     # L2 regularization
+      "dropout_rate",     # Dropout probability
+      "warmup_ratio"      # Learning rate warmup
+  ]
+  ```
 
-## Project Structure
-
-```
-src
-├── __init__.py
-├── config
-│   ├── __init__.py
-│   ├── base_config.py
-│   ├── config.py
-│   └── defaults.py
-├── data_utils
-│   ├── __init__.py
-│   ├── dataset.py
-│   ├── loaders.py
-│   ├── splitter.py
-│   └── validation.py
-├── evaluation
-│   └── evaluator.py
-├── models
-│   ├── __init__.py
-│   └── model.py
-├── training
-│   ├── __init__.py
-│   ├── train.py
-│   └── trainer.py
-├── tuning
-│   ├── __init__.py
-│   └── optimize.py
-└── utils
-    ├── data_splitter_old.py
-    ├── logging_manager.py
-    ├── metrics.py
-    ├── model_loading.py
-    └── train_utils.py
+### Hyperparameter Search Space
+```python
+SEARCH_SPACE = {
+    'batch_size': [8, 16, 32, 64],          # Memory-aware
+    'num_hidden_layers': (1, 4),            # Architecture depth
+    'dropout_rate': (0.1, 0.6),            # Regularization
+    'lr': (1e-6, 5e-3),                    # Log scale
+    'weight_decay': (1e-8, 1e-2),          # Log scale
+    'warmup_ratio': (0.0, 0.3),            # LR schedule
+    'activation': ['relu', 'gelu', 'silu', 'tanh']
+}
 ```
 
-Key Components:
-- **config/**: Manages configuration settings with validation and inheritance.
-  - `base_config.py`: Base configuration class.
-  - `config.py`: Handles model and training configurations.
-  - `defaults.py`: Contains default configuration values.
-- **data_utils/**: Handles data processing and management.
-  - `dataset.py`: PyTorch dataset implementation for text classification.
-  - `loaders.py`: Utilities for loading data.
-  - `splitter.py`: Manages data splitting into training, validation, and test sets.
-  - `validation.py`: Tools for data validation.
-- **models/**: Contains model architectures.
-  - `model.py`: Implements the BERT-based classifier.
-- **training/**: Manages the training pipeline.
-  - `train.py`: Script to initiate training.
-  - `trainer.py`: Implements the training loop and evaluation during training.
-- **tuning/**: Handles hyperparameter optimization using Optuna.
-  - `optimize.py`: Script to perform hyperparameter tuning.
-- **evaluation/**: Tools for evaluating model performance.
-  - `evaluator.py`: Implements model evaluation metrics and analysis.
-- **utils/**: Common utilities used across the project.
-  - `logging_manager.py`: Configures logging.
-  - `metrics.py`: Defines evaluation metrics.
-  - `model_loading.py`: Utilities for loading models.
-  - `train_utils.py`: Helper functions for training.
+### Early Stopping Intelligence
+- Multiple stopping criteria:
+  - No improvement patience (adaptive)
+  - Performance regression detection (20% drop)
+  - Negative trend analysis
+  - Moving average smoothing
+  - Minimum epochs enforcement
 
-## Quick Usage
+## Usage
 
-### 1. Setup
+### Basic Training
 ```bash
-# Create environment
-conda env create -f nlp_env.yml
-
-# Prepare BERT model
-python scripts/download_BERT.py
-```
-
-### 2. Train
-```bash
-# Basic usage (data must be in /Users/tod/BERT_TRAINING/data/bbc-text.csv)
 python -m src.training.train \
-    --data_file "bbc-text.csv" \
-    --output_root "/Users/tod/BERT_TRAINING" \
+    --data_file "datafile_name.csv" \
+    --output_root "/path/to/output" \
     --num_epochs 10 \
-    --batch_size 32
-
+    --batch_size 32 \
+    --verbosity 2
 ```
 
-### 3. Optimize
+### Hyperparameter Optimization
 ```bash
 python -m src.tuning.optimize \
-    --data_file "bbc-text.csv" \
-    --output_root "/Users/tod/BERT_TRAINING" \
-    --n_trials 5 \
+    --data_file "datafile_name.csv" \
+    --output_root "/path/to/output" \
     --study_name "bert_opt" \
-    --batch_size 32 \
-    --device cpu
-
+    --n_trials 50 \
+    --device cpu \
+    --verbosity 2
 ```
-
-### 4. Evaluate
+### Model Evaluation
 ```bash
-# Evaluate model (paths are relative to output_root)
 python -m src.evaluation.evaluator \
-    --data_file "bbc-text.csv" \
-    --output_root "/Users/tod/BERT_TRAINING" \
-    --best_model "best_trials/bert_classifier.pth" \
-    --device cpu
+    --data_file "datafile_name.csv" \
+    --output_root "/path/to/output" \
+    --best_model "best_trials/bert_classifier.pth"
+```
+### Configuration (config.yml)
+```yaml
+model:
+  max_seq_len: 64
+  batch_size: 32
+  num_epochs: 10
+  device: cpu
+  metric: f1
+
+classifier:
+  bert_hidden_size: 384
+  hidden_dims: [412, 220, 118]
+  dropout_rate: 0.35
+  activation: gelu
+
+optimizer:
+  optimizer_choice: adamw
+  lr: 0.003
+  weight_decay: 0.005
+  warmup_ratio: 0.165
+  betas: (0.656, 0.999)
 ```
 
-## Data Format
+## Advanced Features
 
+### Population Based Training
+The PBT implementation maintains a population of 4 models training in parallel:
+1. Models in bottom 20% of population trigger adaptation
+2. 50% chance to either:
+   - Exploit: Copy params from better model
+   - Explore: Perturb current params
+3. Adaptation occurs during training, not between trials
+4. Maintains diverse population of good solutions
+
+### Memory Management
+```python
+class MemoryManager:
+    """Dynamic batch size adjustment based on memory usage"""
+    memory_threshold = 0.85  # 85% memory usage threshold
+    batch_size_limits = {
+        "min": 8,
+        "max": 64,
+        "current": 32
+    }
+```
+
+### Early Stopping Configuration
+```python
+early_stopping = {
+    'patience': max(3, min(8, trial.number // 2)),
+    'min_epochs': max(5, num_epochs // 4),
+    'improvement_threshold': 0.001,
+    'smoothing_window': 3,
+    'trend_window': 5
+}
+```
+
+### Logging Levels
+- 0: Minimal (warnings only)
+- 1: Normal (info + progress)
+- 2: Debug (detailed paths, sizes, configs)
+
+### Data Format
 Required CSV structure:
 ```csv
 text,category
@@ -124,60 +140,36 @@ text,category
 "Sample text 2","class_b"
 ```
 
-Requirements:
-- UTF-8 encoding
-- No missing values
-- Headers: "text", "category"
-
-## Configuration
-
-### Configuration File
-Place `config.yml` in the project root:
-
-```yaml
-# Directory structure
-output_root: /path/to/outputs
-dirs:
-  best_trials: best_trials
-  checkpoints: checkpoints
-  evaluation: evaluation_results
-  logs: logs
-  data: data
-  models: models
-
-# Model paths and configuration
-model_paths:
-  bert_encoder: /path/to/bert/encoder
-
-model:
-  max_seq_len: 64
-  batch_size: 32
-  num_epochs: 10
-  learning_rate: 2e-5
+## Project Structure
 ```
-
-Configuration precedence:
-1. Command line arguments (highest priority)
-2. Project root `config.yml`
-3. Environment variable `BERT_CONFIG`
-4. Default values (lowest priority)
-
-### Model Settings
-```python
-config = {
-    'architecture_type': 'standard',  # or 'plane_resnet'
-    'num_layers': 2,
-    'hidden_dim': 256,
-    'dropout_rate': 0.1
-}
-```
-
-### Optimization Space
-```python
-search_space = {
-    'learning_rate': (1e-5, 1e-3),
-    'batch_size': [16, 32, 64],
-    'num_layers': (1, 4),
-    'hidden_dim': [128, 256, 512]
-}
+src/
+├── __init__.py
+├── config                # Configuration management
+│   ├── __init__.py
+│   ├── base_config.py
+│   ├── config.py
+│   └── defaults.py
+├── data_utils            # Data handling and splits
+│   ├── __init__.py
+│   ├── dataset.py
+│   ├── loaders.py
+│   ├── splitter.py
+│   └── validation.py
+├── evaluation            #model evaluation
+│   └── evaluator.py
+├── models                # BERT classifier architecture
+│   ├── __init__.py
+│   └── model.py
+├── training              # Training implementation
+│   ├── __init__.py
+│   ├── train.py
+│   └── trainer.py
+├── tuning                # PBT and optimization
+│   ├── __init__.py
+│   └── optimize.py
+└── utils                 # Common utilities
+    ├── logging_manager.py
+    ├── metrics.py
+    ├── model_loading.py
+    └── train_utils.py
 ```
