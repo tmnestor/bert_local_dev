@@ -4,6 +4,11 @@ import argparse
 import torch
 import pandas as pd
 from tqdm.auto import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
+from collections import defaultdict
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score  # Add these imports
 
 from ..config.config import EvaluationConfig, ModelConfig
 from ..models.model import BERTClassifier
@@ -151,6 +156,96 @@ class ModelEvaluator:
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}") from e
 
+    def _plot_confusion_matrix(
+        self, actual_labels: List[str], predicted_labels: List[str], output_dir: Path
+    ) -> None:
+        """Generate and save confusion matrix visualization."""
+        # Use default fonts and style settings
+        plt.style.use("default")
+        plt.rcParams.update(
+            {
+                "font.family": "sans-serif",
+                "font.size": 10,
+                "figure.figsize": (12, 8),
+                "figure.dpi": 100,
+                "savefig.dpi": 300,
+                "savefig.bbox": "tight",
+            }
+        )
+
+        plt.figure()
+        cm = pd.crosstab(
+            pd.Series(actual_labels, name="Actual"),
+            pd.Series(predicted_labels, name="Predicted"),
+        )
+
+        # Create heatmap with basic text annotations
+        ax = sns.heatmap(
+            cm,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            annot_kws={"size": 10},
+            cbar=True,
+            square=True,
+        )
+
+        ax.set_title("Confusion Matrix", pad=20)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+
+        plt.tight_layout()
+        plt.savefig(output_dir / "confusion_matrix.png")
+        plt.close()
+
+    def analyze_confidence_thresholds(
+        self, probabilities: List[float], predictions: List[int], labels: List[int]
+    ) -> Dict[float, Dict[str, float]]:
+        """Analyze model performance across different confidence thresholds."""
+        thresholds = np.arange(0.1, 1.0, 0.1)
+        results = {}
+
+        for threshold in thresholds:
+            # Filter predictions above threshold
+            high_conf_mask = np.array(probabilities) >= threshold
+            if not any(high_conf_mask):
+                continue
+
+            filtered_preds = [p for p, m in zip(predictions, high_conf_mask) if m]
+            filtered_labels = [l for l, m in zip(labels, high_conf_mask) if m]
+
+            # Calculate metrics
+            results[threshold] = {
+                "accuracy": accuracy_score(filtered_labels, filtered_preds),
+                "coverage": sum(high_conf_mask) / len(high_conf_mask),
+                "f1": f1_score(filtered_labels, filtered_preds, average="macro"),
+            }
+
+        return results
+
+    def analyze_errors(
+        self,
+        texts: List[str],
+        true_labels: List[str],
+        pred_labels: List[str],
+        confidences: List[float],
+    ) -> pd.DataFrame:
+        """Analyze misclassified examples."""
+        errors = defaultdict(list)
+
+        for text, true, pred, conf in zip(texts, true_labels, pred_labels, confidences):
+            if true != pred:
+                errors["text"].append(text)
+                errors["true_label"].append(true)
+                errors["predicted_label"].append(pred)
+                errors["confidence"].append(conf)
+                # Add text length as potential feature
+                errors["text_length"].append(len(text.split()))
+
+        error_df = pd.DataFrame(errors)
+        error_df = error_df.sort_values("confidence", ascending=False)
+        return error_df
+
     def evaluate(
         self, save_predictions: bool = True, output_dir: Optional[Path] = None
     ) -> Tuple[Dict[str, float], pd.DataFrame]:
@@ -165,10 +260,7 @@ class ModelEvaluator:
 
         # Create dataloader and run evaluation - remove validation_mode parameter
         test_dataloader = create_dataloaders(
-            test_texts,
-            test_labels,
-            self.config,
-            self.config.batch_size
+            test_texts, test_labels, self.config, self.config.batch_size
         )
 
         # Run evaluation
@@ -227,6 +319,30 @@ class ModelEvaluator:
             confusion_df.to_csv(output_dir / "confusion_matrix.csv")
             tqdm.write(f"\nDetailed results saved to: {output_dir}")
 
+            # Plot confusion matrix
+            self._plot_confusion_matrix(
+                results_df["true_label"], results_df["predicted_label"], output_dir
+            )
+
+            # Analyze confidence thresholds
+            threshold_results = self.analyze_confidence_thresholds(
+                [max(probs) for probs in all_probs],
+                all_preds,  # Add predictions parameter
+                all_labels,
+            )
+            pd.DataFrame(threshold_results).T.to_csv(
+                output_dir / "confidence_analysis.csv"
+            )
+
+            # Analyze errors
+            error_analysis = self.analyze_errors(
+                test_texts,
+                results_df["true_label"],
+                results_df["predicted_label"],
+                results_df["confidence"],
+            )
+            error_analysis.to_csv(output_dir / "error_analysis.csv")
+
         return metrics, results_df
 
     @classmethod
@@ -283,7 +399,9 @@ def main():
         if not best_model.is_absolute():
             best_model = config.output_root / best_model
 
-        logger.info(f"Loading model from: {best_model}")  # Keep this single loading message
+        logger.info(
+            f"Loading model from: {best_model}"
+        )  # Keep this single loading message
         evaluator = ModelEvaluator(
             model_path=best_model,  # Pass resolved path
             config=config,
