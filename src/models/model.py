@@ -81,18 +81,7 @@ class BERTClassifier(nn.Module):
         logger.debug("\nBuilding classifier with layers: %s", layer_sizes)
         logger.debug("Activation: %s, Dropout: %.3f", activation, dropout_rate)
 
-        # Updated activation function mapping
-        activation_fn = {
-            "relu": nn.ReLU(),
-            "gelu": nn.GELU(),
-            "silu": nn.SiLU(),
-            "tanh": nn.Tanh(),
-            "leaky_relu": nn.LeakyReLU(),
-        }.get(activation.lower())
-
-        if activation_fn is None:
-            logger.warning("Unknown activation '%s', using GELU", activation)
-            activation_fn = nn.GELU()
+        activation_fn = self._get_activation(activation)
 
         layers = []
         for i in range(len(layer_sizes) - 1):
@@ -102,6 +91,22 @@ class BERTClassifier(nn.Module):
                 layers.append(nn.Dropout(dropout_rate))
 
         return nn.Sequential(*layers)
+
+    def _get_activation(self, name: str) -> nn.Module:
+        """Get activation function by name."""
+        activations = {
+            "relu": nn.ReLU(),
+            "gelu": nn.GELU(),
+            "silu": nn.SiLU(),
+            "elu": nn.ELU(),
+            "tanh": nn.Tanh(),
+            "leaky_relu": nn.LeakyReLU(),
+            "prelu": nn.PReLU(),
+        }
+        if name.lower() not in activations:
+            logger.warning("Unknown activation '%s', using GELU", name)
+            return nn.GELU()
+        return activations[name.lower()]
 
     def forward(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor

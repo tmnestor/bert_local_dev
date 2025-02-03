@@ -253,7 +253,7 @@ def run_optimization(
     texts = []
     texts.extend(train_texts)
     texts.extend(val_texts)
-    
+
     labels = []
     labels.extend(train_labels)
     labels.extend(val_labels)
@@ -308,6 +308,7 @@ def run_optimization(
                 ),
             ],
             gc_after_trial=True,
+            catch=(optuna.TrialPruned,),  # Add this to handle pruned trials gracefully
         )
     finally:
         trial_pbar.close()
@@ -475,10 +476,18 @@ def get_trial_config(
         num_layers=num_hidden_layers,
     )
 
-    # Add activation function as a trial parameter
-    activation = trial.suggest_categorical(
-        "activation", ["relu", "gelu", "silu", "tanh"]
-    )
+    # Updated activation function options with only supported activations
+    activation_functions = [
+        "relu",  # Standard ReLU
+        "gelu",  # Gaussian Error Linear Unit
+        "silu",  # Sigmoid Linear Unit (Swish)
+        "elu",  # Exponential Linear Unit
+        "tanh",  # Hyperbolic Tangent
+        "leaky_relu",  # Leaky ReLU
+        "prelu",  # Parametric ReLU
+    ]
+
+    activation = trial.suggest_categorical("activation", activation_functions)
 
     classifier_config = {
         "hidden_dim": hidden_dims,
@@ -812,47 +821,25 @@ def objective(
                 # Early stopping checks
                 should_stop, reason = early_stopping.should_stop(epoch, score)
                 if should_stop:
-                    # Add newline before early stopping message
-                    logger.info("\nEarly stopping triggered: %s", reason)
+                    logger.info("\nEarly stopping trial %d: %s", trial.number, reason)
                     break
 
-                # Optuna pruning check
-                if trial.should_prune():
-                    raise optuna.TrialPruned(f"Trial pruned at epoch {epoch}")
+                # Optuna pruning check - handle more gracefully
+                try:
+                    trial.should_prune()
+                except optuna.TrialPruned:
+                    if trial_pbar:
+                        trial_pbar.update(1)
+                    logger.info(
+                        "\nPruned trial %d at epoch %d (score: %.4f)",
+                        trial.number,
+                        epoch,
+                        score,
+                    )
+                    raise  # Re-raise for Optuna to handle
 
-                # Check if we should perform PBT operations
-                if pbt_manager and pbt_manager.should_explore(score):
-                    # Either exploit or explore
-                    if random.random() < 0.5:
-                        new_params = pbt_manager.exploit(score, trial.params)
-                        if new_params:
-                            # Update trial parameters
-                            for key, value in new_params.items():
-                                trial.params[key] = value
-                            # Recreate optimizer with new parameters
-                            optimizer_config = get_optimizer_config(
-                                trial,
-                                optimizer_name,
-                                new_params.get(
-                                    "lr"
-                                ),  # Changed from learning_rate to lr
-                            )
-                            optimizer = create_optimizer(
-                                optimizer_name, model.parameters(), **optimizer_config
-                            )
-                    else:
-                        # Explore by perturbing current parameters
-                        new_params = pbt_manager.explore(trial.params)
-                        trial.params.update(new_params)
-                        optimizer_config = get_optimizer_config(
-                            trial,
-                            optimizer_name,
-                            new_params.get("lr"),  # Changed from learning_rate to lr
-                        )
-                        optimizer = create_optimizer(
-                            optimizer_name, model.parameters(), **optimizer_config
-                        )
-
+            except optuna.TrialPruned:
+                raise  # Re-raise pruned trials
             except Exception as e:
                 logger.error("Error in epoch %d: %s", epoch, str(e))
                 raise
@@ -876,6 +863,10 @@ def objective(
 
         return trial_best_score
 
+    except optuna.TrialPruned:
+        if model_config.verbosity > 0:
+            logger.info("Trial %d pruned at epoch %d", trial.number, epoch)
+        raise  # Re-raise for Optuna to handle
     except Exception as e:
         if trial_pbar:
             trial_pbar.update(1)
