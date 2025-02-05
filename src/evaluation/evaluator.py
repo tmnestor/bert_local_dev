@@ -212,26 +212,33 @@ class ModelEvaluator:
         self, error_df: pd.DataFrame, output_dir: Path
     ) -> None:
         """Generate visualizations for error analysis."""
-        # 1. Create word clouds by error type
-        plt.figure(figsize=(15, 10))
-        for true_label in error_df['true_label'].unique():
+        # 1. Create word clouds by error type - make them larger
+        num_classes = len(error_df['true_label'].unique())
+        plt.figure(figsize=(20, 8 * num_classes))  # Increased figure size
+        
+        for idx, true_label in enumerate(error_df['true_label'].unique(), 1):
             mask = error_df['true_label'] == true_label
             texts = ' '.join(error_df[mask]['text'])
             
             wordcloud = WordCloud(
-                width=800, height=400,
+                width=1600,         # Doubled width
+                height=800,         # Doubled height
                 background_color='white',
-                max_words=50
+                max_words=100,      # Increased max words
+                min_font_size=10,   # Set minimum font size
+                max_font_size=100   # Set maximum font size
             ).generate(texts)
             
-            plt.subplot(len(error_df['true_label'].unique()), 1, 
-                       list(error_df['true_label'].unique()).index(true_label) + 1)
-            plt.imshow(wordcloud)
+            plt.subplot(num_classes, 1, idx)
+            plt.imshow(wordcloud, interpolation='bilinear')
             plt.axis('off')
-            plt.title(f'Misclassified Words for True Label: {true_label}')
+            plt.title(f'Misclassified Words for True Label: {true_label}', 
+                     fontsize=16, pad=20)  # Larger title font
         
-        plt.tight_layout()
-        plt.savefig(output_dir / 'error_wordclouds.png')
+        plt.tight_layout(pad=3.0)  # Added padding between subplots
+        plt.savefig(output_dir / 'error_wordclouds.png', 
+                    dpi=300,        # Higher DPI
+                    bbox_inches='tight')
         plt.close()
 
         # 2. Confidence distribution for errors
