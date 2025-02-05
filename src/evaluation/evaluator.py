@@ -212,33 +212,51 @@ class ModelEvaluator:
         self, error_df: pd.DataFrame, output_dir: Path
     ) -> None:
         """Generate visualizations for error analysis."""
-        # 1. Create word clouds by error type - make them larger
+        # 1. Create word clouds by error type with matched widths
         num_classes = len(error_df['true_label'].unique())
-        plt.figure(figsize=(20, 8 * num_classes))  # Increased figure size
+        fig_width = 20  # Fixed figure width
+        fig_height = 6 * num_classes  # Height per class
+        
+        plt.figure(figsize=(fig_width, fig_height))
+        
+        # Set consistent style for all subplots
+        plt.style.use('default')
+        plt.rcParams.update({
+            'font.size': 12,
+            'axes.titlesize': 14,
+            'axes.titlepad': 20,
+            'figure.constrained_layout.use': True  # Better spacing
+        })
         
         for idx, true_label in enumerate(error_df['true_label'].unique(), 1):
             mask = error_df['true_label'] == true_label
             texts = ' '.join(error_df[mask]['text'])
             
+            # Create subplot with specific size
+            plt.subplot(num_classes, 1, idx)
+            
+            # Create and generate wordcloud
             wordcloud = WordCloud(
-                width=1600,         # Doubled width
-                height=800,         # Doubled height
+                width=2000,           # Increased for better resolution
+                height=400,           # Fixed height
                 background_color='white',
-                max_words=100,      # Increased max words
-                min_font_size=10,   # Set minimum font size
-                max_font_size=100   # Set maximum font size
+                max_words=100,
+                prefer_horizontal=0.7,  # More horizontal words
+                min_font_size=8,
+                max_font_size=80
             ).generate(texts)
             
-            plt.subplot(num_classes, 1, idx)
-            plt.imshow(wordcloud, interpolation='bilinear')
+            plt.imshow(wordcloud, interpolation='bilinear', aspect='auto')
             plt.axis('off')
             plt.title(f'Misclassified Words for True Label: {true_label}', 
-                     fontsize=16, pad=20)  # Larger title font
+                     pad=20, fontsize=14, fontweight='bold')
         
-        plt.tight_layout(pad=3.0)  # Added padding between subplots
+        # Adjust layout to prevent overlap
+        plt.tight_layout(h_pad=3.0)
         plt.savefig(output_dir / 'error_wordclouds.png', 
-                    dpi=300,        # Higher DPI
-                    bbox_inches='tight')
+                    dpi=300,
+                    bbox_inches='tight',
+                    facecolor='white')
         plt.close()
 
         # 2. Confidence distribution for errors
