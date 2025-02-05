@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score  # Add these imports
+import logging
+import matplotlib.font_manager as fm
+
+# Suppress matplotlib font manager debug messages
+logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
 from ..config.config import EvaluationConfig, ModelConfig
 from ..models.model import BERTClassifier
