@@ -11,6 +11,11 @@ import numpy as np
 from sklearn.metrics import accuracy_score, f1_score  # Add these imports
 import logging
 import matplotlib.font_manager as fm
+from sklearn.feature_extraction.text import TfidfVectorizer
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+import seaborn as sns
+from collections import Counter
 
 # Suppress matplotlib font manager debug messages
 logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
@@ -203,6 +208,60 @@ class ModelEvaluator:
         plt.savefig(output_dir / "confusion_matrix.png")
         plt.close()
 
+    def _plot_error_analysis(
+        self, error_df: pd.DataFrame, output_dir: Path
+    ) -> None:
+        """Generate visualizations for error analysis."""
+        # 1. Create word clouds by error type
+        plt.figure(figsize=(15, 10))
+        for true_label in error_df['true_label'].unique():
+            mask = error_df['true_label'] == true_label
+            texts = ' '.join(error_df[mask]['text'])
+            
+            wordcloud = WordCloud(
+                width=800, height=400,
+                background_color='white',
+                max_words=50
+            ).generate(texts)
+            
+            plt.subplot(len(error_df['true_label'].unique()), 1, 
+                       list(error_df['true_label'].unique()).index(true_label) + 1)
+            plt.imshow(wordcloud)
+            plt.axis('off')
+            plt.title(f'Misclassified Words for True Label: {true_label}')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'error_wordclouds.png')
+        plt.close()
+
+        # 2. Confidence distribution for errors
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=error_df, x='confidence', hue='true_label', bins=20)
+        plt.title('Confidence Distribution of Errors by True Label')
+        plt.savefig(output_dir / 'error_confidence_dist.png')
+        plt.close()
+
+        # 3. Error confusion patterns
+        confusion = pd.crosstab(
+            error_df['true_label'],
+            error_df['predicted_label'],
+            values=error_df['confidence'],
+            aggfunc='mean'
+        )
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(confusion, annot=True, fmt='.2f', cmap='YlOrRd')
+        plt.title('Average Confidence of Misclassifications')
+        plt.savefig(output_dir / 'error_confusion_patterns.png')
+        plt.close()
+
+        # 4. Text length analysis
+        plt.figure(figsize=(10, 6))
+        sns.boxplot(data=error_df, x='true_label', y='text_length')
+        plt.title('Text Length Distribution by True Label')
+        plt.xticks(rotation=45)
+        plt.savefig(output_dir / 'error_length_dist.png')
+        plt.close()
+
     def analyze_confidence_thresholds(
         self, probabilities: List[float], predictions: List[int], labels: List[int]
     ) -> Dict[float, Dict[str, float]]:
@@ -249,6 +308,10 @@ class ModelEvaluator:
 
         error_df = pd.DataFrame(errors)
         error_df = error_df.sort_values("confidence", ascending=False)
+        
+        # Generate error analysis plots
+        self._plot_error_analysis(error_df, self.config.evaluation_dir)
+        
         return error_df
 
     def evaluate(
@@ -347,6 +410,19 @@ class ModelEvaluator:
                 results_df["confidence"],
             )
             error_analysis.to_csv(output_dir / "error_analysis.csv")
+            
+            # Add error analysis metrics to results
+            error_metrics = {
+                'error_rate_by_class': (confusion_df.iloc[:-1, :-1].sum(axis=1) / 
+                                      confusion_df.iloc[:-1, -1]).to_dict(),
+                'avg_confidence_errors': error_analysis['confidence'].mean(),
+                'avg_text_length_errors': error_analysis['text_length'].mean(),
+            }
+            
+            # Save error metrics
+            pd.DataFrame([error_metrics]).to_csv(
+                output_dir / 'error_metrics.csv', index=False
+            )
 
         return metrics, results_df
 
