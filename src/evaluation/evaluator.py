@@ -215,8 +215,8 @@ class ModelEvaluator:
         num_classes = len(error_df['true_label'].unique())
         
         # Convert inches to pixels (assuming 100 DPI)
-        inches_width = 5
-        inches_height = 2
+        inches_width = 7    # Changed from 5 to 7 inches
+        inches_height = 3   # Increased height for better proportion
         dpi = 100
         width_pixels = inches_width * dpi
         height_pixels = inches_height * dpi
@@ -225,7 +225,7 @@ class ModelEvaluator:
         plt.style.use('default')
         plt.rcParams.update({
             'font.size': 12,
-            'axes.titlesize': 14,
+            'axes.titlesize': 16,        # Increased from 14
             'axes.titlepad': 20,
             'figure.constrained_layout.use': True
         })
@@ -237,21 +237,25 @@ class ModelEvaluator:
             plt.subplot(num_classes, 1, idx)
             
             wordcloud = WordCloud(
-                width=width_pixels,          # Fixed 5-inch width
-                height=height_pixels,        # Fixed 2-inch height
+                width=width_pixels,
+                height=height_pixels,
                 background_color='white',
                 max_words=100,
                 prefer_horizontal=0.7,
                 min_font_size=8,
-                max_font_size=80
+                max_font_size=100        # Increased from 80
             ).generate(texts)
             
             plt.imshow(wordcloud, interpolation='bilinear', aspect='equal')
             plt.axis('off')
+            # Make title more prominent
             plt.title(f'Misclassified Words for True Label: {true_label}', 
-                     pad=20, fontsize=14, fontweight='bold')
+                     pad=25,              # Increased padding
+                     fontsize=16,         # Increased font size
+                     fontweight='bold',
+                     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))  # Added background
         
-        plt.tight_layout(h_pad=1.0)
+        plt.tight_layout(h_pad=2.0)  # Increased padding between subplots
         plt.savefig(output_dir / 'error_wordclouds.png', 
                     dpi=dpi,
                     bbox_inches='tight',
