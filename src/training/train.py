@@ -1,3 +1,32 @@
+"""Training module for BERT text classifier models.
+
+This module handles the end-to-end training process for BERT classifiers including:
+- Data loading and preprocessing
+- Model initialization and configuration
+- Training loop execution
+- Checkpoint management
+- Progress tracking and logging
+- Early stopping
+- Performance monitoring
+
+The module supports both direct training and hyperparameter-optimized training,
+loading configurations from either command line arguments or optimization results.
+
+Typical usage:
+    ```python
+    config = ModelConfig.from_args(args)
+    train_model(config)
+    ```
+
+Attributes:
+    CONFIG (Dict): Default configuration loaded from config.yml
+    CLASSIFIER_DEFAULTS (Dict): Default classifier architecture settings
+    
+Note:
+    This module expects a BERT encoder to be available at the specified path
+    and a properly formatted dataset with 'text' and 'category' columns.
+"""
+
 #!/usr/bin/env python
 
 import argparse
@@ -6,20 +35,17 @@ from typing import Optional
 import torch
 from transformers import get_linear_schedule_with_warmup
 
-from ..config.config import ModelConfig
+from ..config.configuration import (
+    ModelConfig,
+    CONFIG,
+    CLASSIFIER_DEFAULTS,
+)
 from ..models.model import BERTClassifier
 from .trainer import Trainer
 from ..data_utils import load_and_preprocess_data, create_dataloaders
 from ..utils.train_utils import initialize_progress_bars
-from ..utils.logging_manager import (
-    get_logger,
-    setup_logging,
-)  # Add setup_logging import
-from ..config.defaults import (
-    CLASSIFIER_DEFAULTS,  # Add this import
-    CONFIG,  # Add CONFIG import
-)
-from ..tuning.optimize import create_optimizer  # Update this import
+from ..utils.logging_manager import get_logger, setup_logging
+from ..tuning.optimize import create_optimizer
 
 logger = get_logger(__name__)  # Change to get_logger
 
@@ -144,6 +170,12 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
             "warmup_ratio": CONFIG["optimizer"]["warmup_ratio"],
         }
 
+    # Ensure bert_model_name is absolute
+    if not Path(model_config.bert_model_name).is_absolute():
+        model_config.bert_model_name = str(model_config.output_root / "bert_encoder")
+
+    logger.info("Using BERT encoder from: %s", model_config.bert_model_name)
+
     # Single optimizer configuration section
     optimizer_name = clf_config.get("optimizer", "adamw")
     optimizer_params = {
@@ -181,26 +213,24 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
     # Update classifier config with optimizer settings
     clf_config["optimizer_config"] = optimizer_params
 
-    # Load data and set num_classes
-    train_texts, val_texts, train_labels, val_labels, label_encoder = (
-        load_and_preprocess_data(model_config)
-    )
+    # Load data with DataBundle return type
+    data = load_and_preprocess_data(model_config)
 
     # Set num_classes based on label encoder if not already set
     if model_config.num_classes is None:
-        model_config.num_classes = len(label_encoder.classes_)
+        model_config.num_classes = len(data.label_encoder.classes_)
 
     logger.info(
         "Loaded %d training and %d validation samples (%d classes)",
-        len(train_texts),
-        len(val_texts),
+        len(data.train_texts),
+        len(data.val_texts),
         model_config.num_classes,
     )
 
-    # Create dataloaders using utility function
+    # Create dataloaders using utility function with DataBundle attributes
     train_dataloader, val_dataloader = create_dataloaders(
-        [train_texts, val_texts],
-        [train_labels, val_labels],
+        [data.train_texts, data.val_texts],
+        [data.train_labels, data.val_labels],
         model_config,
         model_config.batch_size,
     )
@@ -270,14 +300,27 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
                     "metric": model_config.metric,
                 }
                 torch.save(save_dict, model_config.model_save_path)
-                logger.info(
-                    "\nSaved new best model with %s=%.4f", model_config.metric, score
-                )
+
+                # Add verbosity-specific logging
+                if model_config.verbosity >= 1:
+                    logger.info(
+                        "\nSaved better model with %s=%.4f to: %s",
+                        model_config.metric,
+                        score,
+                        model_config.model_save_path,
+                    )
 
     finally:
         epoch_pbar.close()
         if batch_pbar is not None:  # Only close batch_pbar if it exists
             batch_pbar.close()
+
+        # Add final training status with path
+        if model_config.verbosity >= 1:
+            logger.info(
+                "\nTraining completed. Best %s: %.4f", model_config.metric, best_score
+            )
+            logger.info("Final model saved to: %s", model_config.model_save_path)
 
     logger.info("\nTraining completed. Best %s: %.4f", model_config.metric, best_score)
     if model_config.verbosity > 1:  # Add detailed path logging for debug level
@@ -296,16 +339,56 @@ def parse_args() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # Add all ModelConfig arguments
-    ModelConfig.add_argparse_args(parser)
+    # Essential paths and settings
+    parser.add_argument(
+        "--output_root",
+        type=Path,
+        default=Path(CONFIG["output_root"]),  # Get from CONFIG
+        help="Root directory for all operations",
+    )
+    parser.add_argument(
+        "--verbosity",
+        type=int,
+        default=CONFIG.get("logging", {}).get("verbosity", 1),  # Get from CONFIG
+        choices=[0, 1, 2],
+        help="Verbosity level",
+    )
 
-    args = parser.parse_args()
+    # Training parameters
+    train_group = parser.add_argument_group("Training")
+    train_group.add_argument(
+        "--num_epochs",
+        type=int,
+        default=CONFIG["model"]["num_epochs"],  # Get from CONFIG
+        help="Number of training epochs",
+    )
+    train_group.add_argument(
+        "--batch_size",
+        type=int,
+        default=CONFIG["model"]["batch_size"],  # Get from CONFIG
+        help="Training batch size",
+    )
+    train_group.add_argument(
+        "--max_seq_len",
+        type=int,
+        default=CONFIG["model"]["max_seq_len"],  # Get from CONFIG
+        help="Maximum sequence length for tokenization",
+    )
+    train_group.add_argument(
+        "--learning_rate",
+        type=float,
+        default=CONFIG["optimizer"]["lr"],  # Get from CONFIG
+        help="Learning rate",
+    )
+    train_group.add_argument(
+        "--device",
+        type=str,
+        default=CONFIG["model"]["device"],  # Get from CONFIG
+        choices=["cpu", "cuda"],
+        help="Device for training",
+    )
 
-    # Validate num_epochs is positive
-    if args.num_epochs < 1:
-        parser.error("num_epochs must be positive")
-
-    return args
+    return parser.parse_args()
 
 
 if __name__ == "__main__":

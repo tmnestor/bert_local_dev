@@ -1,3 +1,32 @@
+"""Training utilities for BERT classifier models.
+
+This module provides training and evaluation functionality, including:
+- Training loop management with progress tracking
+- Model state management and checkpointing
+- Metric computation and logging
+- Error handling and validation
+- Device management
+- Learning rate scheduling
+
+The main Trainer class handles model training, evaluation, and state management
+while providing proper error handling and logging.
+
+Typical usage:
+    ```python
+    trainer = Trainer(model, config)
+    for epoch in range(num_epochs):
+        loss = trainer.train_epoch(train_dataloader, optimizer, scheduler)
+        score, metrics = trainer.evaluate(val_dataloader)
+    ```
+
+Attributes:
+    VALID_METRICS (List[str]): List of supported evaluation metrics
+
+Note:
+    All training methods expect data to be properly batched using PyTorch DataLoader.
+    Models must be instances of torch.nn.Module and implement forward() appropriately.
+"""
+
 from typing import Tuple, Optional
 import torch
 from torch import nn
@@ -7,7 +36,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from tqdm.auto import tqdm
 
-from src.config.config import ModelConfig
+from ..config.configuration import ModelConfig  # Changed from config to configuration
 from ..utils.logging_manager import get_logger  # Changed from setup_logger
 
 logger = get_logger(__name__)  # Changed to get_logger

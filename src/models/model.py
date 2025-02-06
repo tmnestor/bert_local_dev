@@ -1,3 +1,39 @@
+"""BERT-based text classifier model implementation.
+
+This module provides the core classifier architecture, including:
+- BERT encoder integration
+- Custom classification head with configurable layers
+- Dynamic activation function support
+- Dropout regularization
+- Forward pass implementation
+- State management utilities
+
+The classifier uses a pre-trained BERT model as the encoder and adds
+a configurable classification head on top for text classification tasks.
+
+Typical usage:
+    ```python
+    classifier = BERTClassifier(
+        bert_model_name="bert-base-uncased",
+        num_classes=5,
+        config={
+            "hidden_dim": [768, 256],
+            "dropout_rate": 0.3,
+            "activation": "gelu"
+        }
+    )
+    outputs = classifier(input_ids=input_ids, attention_mask=attention_mask)
+    ```
+
+Attributes:
+    SUPPORTED_ACTIVATIONS (Dict[str, Type[nn.Module]]): Mapping of activation function
+        names to their PyTorch implementations.
+
+Note:
+    The BERT encoder should be pre-trained and available either locally
+    or through the Hugging Face model hub.
+"""
+
 from typing import Any, Dict
 
 import torch

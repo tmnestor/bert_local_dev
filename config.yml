@@ -1,18 +1,27 @@
-# Directory structure
-output_root: /Users/tod/BERT_TRAINING
-dirs:
+# Define base paths first with anchor
+output_root: &output_root /Users/tod/BERT_TRAINING
+
+# Define directory paths
+dirs: &dirs
   best_trials: best_trials
   evaluation: evaluation_results
   logs: logs
-  data: data
+  data: &data_dir data
+  bert_encoder: bert_encoder
 
-# Model paths
-model_paths:
-  bert_encoder: bert_encoder  # Path relative to output_root
+# Define absolute paths using anchors
+paths:
+  # Fix: use proper path construction for data_root
+  data_root: !join [*output_root, /, *data_dir]  # This will correctly join the paths
 
-# Data paths
+# Data files with absolute paths
 data:
-  default_file: bbc-text.csv  # Just the filename, will be relative to data_dir
+  files:
+    # Use the correct data_root anchor for all files
+    default: !join [*output_root, /, *data_dir, /, bbc-text.csv]
+    train: !join [*output_root, /, *data_dir, /, train.csv]
+    val: !join [*output_root, /, *data_dir, /, val.csv]
+    test: !join [*output_root, /, *data_dir, /, test.csv]
 
 # Model defaults
 model:

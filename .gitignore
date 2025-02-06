@@ -72,3 +72,5 @@ env/
 # BERT MODELS
 
 bert_encoder/
+test_configuration.py
+print_config.py

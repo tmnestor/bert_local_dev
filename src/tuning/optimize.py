@@ -1,4 +1,35 @@
 #!/usr/bin/env python
+
+"""Hyperparameter optimization for BERT classifier using Optuna and Population Based Training.
+
+This module handles hyperparameter optimization using Optuna with PBT integration.
+It provides functionality for:
+- Setting up optimization trials with Optuna
+- Managing hyperparameter population with PBT
+- Dynamic batch size adjustment based on memory usage
+- Early stopping with multiple criteria
+- Trial tracking and logging
+- Model state saving and loading
+- Progress visualization
+
+The main optimization loop uses a combination of Optuna's TPE sampler and
+Population Based Training to efficiently explore the hyperparameter space while
+allowing for dynamic adaptation during training.
+
+Typical usage:
+    ```python
+    config = ModelConfig.from_args(args)
+    best_params = run_optimization(
+        config,
+        experiment_name="bert_opt",
+        n_trials=100,
+    )
+    ```
+
+Note:
+    This module requires Optuna, PyTorch, and the custom BERT classifier implementation.
+"""
+
 import argparse
 import random
 import time
@@ -21,10 +52,11 @@ from torch import optim
 from tqdm.auto import tqdm
 from transformers import get_linear_schedule_with_warmup
 
-from ..config.config import ModelConfig
-from ..config.defaults import (  # Update imports
-    CLASSIFIER_DEFAULTS,  # Add this import
-)
+from ..config.configuration import (
+    ModelConfig,
+    CONFIG,
+    CLASSIFIER_DEFAULTS,
+)  # Change imports to use configuration
 from ..data_utils import create_dataloaders, load_and_preprocess_data
 from ..models.model import BERTClassifier
 from ..training.trainer import Trainer
@@ -234,6 +266,12 @@ def run_optimization(
     n_trials: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run hyperparameter optimization for the BERT classifier."""
+    # Ensure bert_model_name is absolute
+    if not Path(model_config.bert_model_name).is_absolute():
+        model_config.bert_model_name = str(model_config.output_root / "bert_encoder")
+
+    logger.info("Using BERT encoder from: %s", model_config.bert_model_name)
+
     # Only show detailed info if verbosity > 0
     if model_config.verbosity > 0:
         log_separator(logger)
@@ -241,22 +279,20 @@ def run_optimization(
         logger.info("Number of trials: %s", n_trials or model_config.n_trials)
         logger.info("\nLoading data...")
 
-    # Load data - Fix unpacking by capturing all returned values
-    train_texts, val_texts, train_labels, val_labels, label_encoder = (
-        load_and_preprocess_data(model_config)
-    )
+    # Load data with new DataBundle return type
+    data = load_and_preprocess_data(model_config)
 
     if model_config.num_classes is None:
-        model_config.num_classes = len(label_encoder.classes_)
+        model_config.num_classes = len(data.label_encoder.classes_)
 
-    # Fix list concatenation using extend or concatenate
+    # Combine texts and labels
     texts = []
-    texts.extend(train_texts)
-    texts.extend(val_texts)
+    texts.extend(data.train_texts)
+    texts.extend(data.val_texts)
 
     labels = []
-    labels.extend(train_labels)
-    labels.extend(val_labels)
+    labels.extend(data.train_labels)
+    labels.extend(data.val_labels)
 
     logger.info(
         "Loaded %d total samples (%d classes)", len(texts), model_config.num_classes
@@ -440,6 +476,15 @@ class MemoryManager:
         self.batch_size_limits = {"min": 8, "max": 64, "current": 32}
 
     def check_memory(self) -> float:
+        """Get current memory usage as a percentage.
+
+        Returns:
+            float: Memory usage percentage (0-100) for the current process.
+            
+        Note:
+            Uses psutil.Process().memory_percent() which returns the process's
+            current memory utilization as a percentage of total system memory.
+        """
         return psutil.Process().memory_percent()
 
     def adjust_batch_size(self, current_memory: float) -> int:
@@ -727,42 +772,19 @@ def objective(
     trial_pbar: Optional[tqdm] = None,
     pbt_manager: Optional[PBTManager] = None,
 ) -> float:
-    """Optimization objective function for a single trial.
-
-    Handles the training and evaluation of a single hyperparameter configuration trial,
-    including Population Based Training updates if enabled.
-
-    Args:
-        trial (optuna.Trial): Current optimization trial.
-        model_config (ModelConfig): Model configuration object.
-        texts (List[str]): List of input texts.
-        labels (List[int]): List of corresponding labels.
-        best_model_info (Dict[str, Any]): Dictionary tracking best model information.
-        trial_pbar (Optional[tqdm]): Progress bar for trial tracking.
-        pbt_manager (Optional[PBTManager]): Population Based Training manager.
-
-    Returns:
-        float: Trial score (metric value).
-
-    Raises:
-        optuna.TrialPruned: If trial is pruned.
-        Exception: If training fails.
-    """
+    """Optimization objective function with PBT."""
     trial_best_score = 0.0
     classifier_config = None
+    current_params = None
+    trial_best_state = None  # Initialize at the top with other variables
 
     try:
         batch_size, classifier_config, optimizer_name, optimizer_config = (
             get_trial_config(trial, model_config)
         )
+        current_params = trial.params.copy()
 
-        # Only show trial progress if verbosity > 0
-        if model_config.verbosity > 0:
-            log_trial_summary(
-                trial.number, classifier_config, None, model_config.n_trials
-            )
-
-        # Create train/val split here for each trial
+        # Create train/val split
         train_texts, val_texts, train_labels, val_labels = train_test_split(
             texts, labels, test_size=0.2, random_state=trial.number, stratify=labels
         )
@@ -775,7 +797,7 @@ def objective(
             batch_size,
         )
 
-        # Setup training components
+        # Setup initial training components
         model, trainer, optimizer, scheduler = setup_training_components(
             model_config,
             classifier_config,
@@ -784,26 +806,49 @@ def objective(
             train_dataloader,
         )
 
-        # Initialize early stopping manager - replaces unused patience variables
+        # Initialize early stopping
         early_stopping = EarlyStoppingManager(
             patience=max(3, min(8, trial.number // 2)),
             min_epochs=max(5, model_config.num_epochs // 4),
-            improvement_threshold=0.001,
-            smoothing_window=3,
-            trend_window=5,
         )
 
-        # Training loop
-        trial_best_state = None
-
-        # Main training loop
+        # Training loop with PBT
         for epoch in range(model_config.num_epochs):
             try:
+                # Train for one epoch
                 trainer.train_epoch(train_dataloader, optimizer, scheduler)
                 score, metrics = trainer.evaluate(val_dataloader)
                 trial.report(score, epoch)
 
-                # Check for improvement and update best state
+                # PBT: Check if we should exploit better configurations
+                if pbt_manager and epoch > 0:  # Skip first epoch
+                    if pbt_manager.should_explore(score):
+                        # Get better params from population
+                        better_params = pbt_manager.exploit(score, current_params)
+                        if better_params:
+                            # Update trial parameters with better ones
+                            current_params = better_params.copy()
+                            # Explore around the better parameters
+                            current_params = pbt_manager.explore(current_params)
+
+                            # Update model configuration with new parameters
+                            for key, value in current_params.items():
+                                if key in classifier_config:
+                                    classifier_config[key] = value
+
+                            # Re-initialize training components with new config
+                            model, trainer, optimizer, scheduler = (
+                                setup_training_components(
+                                    model_config,
+                                    classifier_config,
+                                    current_params.get("optimizer", optimizer_name),
+                                    optimizer_config,
+                                    train_dataloader,
+                                )
+                            )
+                            logger.info("PBT: Updated configuration in epoch %d", epoch)
+
+                # Update best state if improved
                 if score > trial_best_score:
                     trial_best_score = score
                     trial_best_state = {
@@ -813,7 +858,7 @@ def objective(
                         "config": classifier_config.copy(),
                         f"{model_config.metric}_score": trial_best_score,
                         "trial_number": trial.number,
-                        "params": trial.params.copy(),
+                        "params": current_params.copy(),
                         "epoch": epoch,
                         "metrics": metrics,
                     }
@@ -824,39 +869,19 @@ def objective(
                     logger.info("\nEarly stopping trial %d: %s", trial.number, reason)
                     break
 
-                # Optuna pruning check - handle more gracefully
-                try:
-                    trial.should_prune()
-                except optuna.TrialPruned:
-                    if trial_pbar:
-                        trial_pbar.update(1)
-                    logger.info(
-                        "\nPruned trial %d at epoch %d (score: %.4f)",
-                        trial.number,
-                        epoch,
-                        score,
-                    )
-                    raise  # Re-raise for Optuna to handle
+                # Check for pruning
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
 
             except optuna.TrialPruned:
-                raise  # Re-raise pruned trials
+                raise
             except Exception as e:
                 logger.error("Error in epoch %d: %s", epoch, str(e))
                 raise
 
-        # Update progress and log final result
+        # Update progress and save best result
         if trial_pbar:
             trial_pbar.update(1)
-            # Only show per-trial results if verbosity > 0
-            if model_config.verbosity > 0:
-                log_trial_summary(
-                    trial.number,
-                    classifier_config,
-                    trial_best_score,
-                    model_config.n_trials,
-                )
-
-        # Save best state if this is the best trial so far
         if trial_best_state and trial_best_score > best_model_info["score"]:
             best_model_info["score"] = trial_best_score
             best_model_info["model_info"] = trial_best_state
@@ -864,14 +889,11 @@ def objective(
         return trial_best_score
 
     except optuna.TrialPruned:
-        if model_config.verbosity > 0:
-            logger.info("Trial %d pruned at epoch %d", trial.number, epoch)
-        raise  # Re-raise for Optuna to handle
+        raise
     except Exception as e:
         if trial_pbar:
             trial_pbar.update(1)
-        if model_config.verbosity > 0:  # Only log error details if not in minimal mode
-            logger.error("Trial %d failed: %s", trial.number, str(e), exc_info=True)
+        logger.error("Trial %d failed: %s", trial.number, str(e), exc_info=True)
         raise
 
 
@@ -945,73 +967,61 @@ def load_best_configuration(best_trials_dir: Path, exp_name: str = None) -> dict
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command line arguments for optimization.
-
-    Returns:
-        Namespace containing parsed arguments.
-    """
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="BERT Classifier Hyperparameter Optimization",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    ModelConfig.add_argparse_args(parser)
-
-    optim_group = parser.add_argument_group("Optimization")
-    optim_group.add_argument(
-        "--timeout", type=int, default=None, help="Optimization timeout in seconds"
+    # Get defaults from CONFIG
+    parser.add_argument(
+        "--output_root",
+        type=Path,
+        default=Path(CONFIG["output_root"]),  # From CONFIG
+        help="Root directory for all operations",
     )
-    optim_group.add_argument(
+    parser.add_argument(
         "--study_name",
         type=str,
         default="bert_optimization",
-        help="Base name for the Optuna study",
+        help="Name for the optimization study",
     )
-    optim_group.add_argument(
-        "--storage", type=str, default=None, help="Database URL for Optuna storage"
+    parser.add_argument(
+        "--n_trials",
+        type=int,
+        default=CONFIG.get("optimization", {}).get("n_trials", 100),  # From CONFIG
+        help="Number of optimization trials",
     )
-    optim_group.add_argument(
-        "--seed", type=int, default=None, help="Random seed for sampler"
+    parser.add_argument(
+        "--verbosity",
+        type=int,
+        default=CONFIG.get("logging", {}).get("verbosity", 1),  # From CONFIG
+        choices=[0, 1, 2],
+        help="Verbosity level",
+    )
+    parser.add_argument(
+        "--max_seq_len",
+        type=int,
+        default=CONFIG["model"]["max_seq_len"],  # From CONFIG
+        help="Maximum sequence length for tokenization",
     )
 
     return parser.parse_args()
 
 
-def log_best_configuration(best_info: Dict[str, Any]) -> None:
-    """Log details about the best trial configuration."""
-    logger.info("\nBest Trial Configuration:")
-    logger.info("=" * 50)
-    logger.info("Trial Number: %d", best_info["model_info"]["trial_number"])
-    logger.info("Score: %.4f", best_info["score"])
-    logger.info("\nHyperparameters:")
-    for key, value in best_info["model_info"]["params"].items():
-        logger.info("  %s: %s", key, value)
-    logger.info("=" * 50)
-
-
 if __name__ == "__main__":
     args = parse_args()
     config = ModelConfig.from_args(args)
-    setup_logging(config)  # Initialize logging configuration first
+    setup_logging(config)
 
     try:
-        trials_per_exp = args.trials_per_experiment or args.n_trials
-        for experiment_id in range(args.n_experiments):
-            study_name = f"{args.study_name}_exp{experiment_id}"
-            seed = args.seed + experiment_id if args.seed is not None else None
+        best_params = run_optimization(
+            config,
+            experiment_name=args.study_name,
+            n_trials=args.n_trials,
+        )
+        logger.info("Best parameters: %s", best_params)
 
-            best_params = run_optimization(
-                config,
-                timeout=args.timeout,
-                experiment_name=study_name,
-                storage=args.storage,
-                random_seed=seed,
-                n_trials=trials_per_exp,
-            )
-            logger.info("Experiment %d completed", experiment_id + 1)
-            logger.info("Best parameters: %s", best_params)
-
-        logger.info("\nAll experiments completed successfully")
     except Exception as e:
         logger.error("Error during optimization: %s", str(e), exc_info=True)
         raise

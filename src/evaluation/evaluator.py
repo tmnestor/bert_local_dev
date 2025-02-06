@@ -1,34 +1,55 @@
+"""Model evaluation and analysis utilities for BERT classifier.
+
+This module provides comprehensive evaluation functionality including:
+- Model checkpoint loading and validation
+- Multi-metric performance evaluation
+- Confusion matrix visualization
+- Error analysis with word clouds
+- Confidence threshold analysis
+- Performance visualization
+- Detailed results logging and export
+
+The module generates detailed analysis in both textual and visual formats,
+supporting both basic evaluation and in-depth error analysis.
+
+Typical usage:
+    ```python
+    config = EvaluationConfig.from_args(args)
+    evaluator = ModelEvaluator.from_config(config)
+    metrics, results = evaluator.evaluate(save_predictions=True)
+    ```
+
+Attributes:
+    DEFAULT_METRICS (List[str]): Default metrics for evaluation ['accuracy', 'f1', 'precision', 'recall']
+
+Note:
+    Requires matplotlib, seaborn, and wordcloud for visualization.
+    Expects saved model checkpoints to include both model state and configuration.
+"""
+
+import argparse
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-import argparse
-import torch
-import pandas as pd
-from tqdm.auto import tqdm
-import seaborn as sns
+
 import matplotlib.pyplot as plt
-from collections import defaultdict
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score  # Add these imports
-import logging
-import matplotlib.font_manager as fm
-from sklearn.feature_extraction.text import TfidfVectorizer
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
-from collections import Counter
+import torch
+from sklearn.metrics import accuracy_score, f1_score
+from tqdm.auto import tqdm
+from wordcloud import WordCloud
 
-# Suppress matplotlib font manager debug messages
-logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
-
-from ..config.config import EvaluationConfig, ModelConfig
-from ..models.model import BERTClassifier
-from ..utils.metrics import calculate_metrics
-from ..data_utils import load_and_preprocess_data, create_dataloaders  # Changed import
-from ..utils.logging_manager import (
+from src.config.configuration import CONFIG, EvaluationConfig, ModelConfig
+from src.data_utils import create_dataloaders, load_and_preprocess_data
+from src.models.model import BERTClassifier
+from src.utils.logging_manager import (
     get_logger,
     setup_logging,
 )  # Change from setup_logger
-from ..utils.model_loading import safe_load_checkpoint
+from src.utils.metrics import calculate_metrics
+from src.utils.model_loading import safe_load_checkpoint
 
 logger = get_logger(__name__)  # Change to get_logger
 
@@ -208,86 +229,90 @@ class ModelEvaluator:
         plt.savefig(output_dir / "confusion_matrix.png")
         plt.close()
 
-    def _plot_error_analysis(
-        self, error_df: pd.DataFrame, output_dir: Path
-    ) -> None:
+    def _plot_error_analysis(self, error_df: pd.DataFrame, output_dir: Path) -> None:
         """Generate visualizations for error analysis."""
-        num_classes = len(error_df['true_label'].unique())
-        
+        num_classes = len(error_df["true_label"].unique())
+
         # Convert inches to pixels (assuming 100 DPI)
-        inches_width = 7    # Changed from 5 to 7 inches
-        inches_height = 3   # Increased height for better proportion
+        inches_width = 7  # Changed from 5 to 7 inches
+        inches_height = 3  # Increased height for better proportion
         dpi = 100
         width_pixels = inches_width * dpi
         height_pixels = inches_height * dpi
-        
+
         plt.figure(figsize=(inches_width, inches_height * num_classes))
-        plt.style.use('default')
-        plt.rcParams.update({
-            'font.size': 12,
-            'axes.titlesize': 16,        # Increased from 14
-            'axes.titlepad': 20,
-            'figure.constrained_layout.use': True
-        })
-        
-        for idx, true_label in enumerate(error_df['true_label'].unique(), 1):
-            mask = error_df['true_label'] == true_label
-            texts = ' '.join(error_df[mask]['text'])
-            
+        plt.style.use("default")
+        plt.rcParams.update(
+            {
+                "font.size": 12,
+                "axes.titlesize": 16,  # Increased from 14
+                "axes.titlepad": 20,
+                "figure.constrained_layout.use": True,
+            }
+        )
+
+        for idx, true_label in enumerate(error_df["true_label"].unique(), 1):
+            mask = error_df["true_label"] == true_label
+            texts = " ".join(error_df[mask]["text"])
+
             plt.subplot(num_classes, 1, idx)
-            
+
             wordcloud = WordCloud(
                 width=width_pixels,
                 height=height_pixels,
-                background_color='white',
+                background_color="white",
                 max_words=100,
                 prefer_horizontal=0.7,
                 min_font_size=8,
-                max_font_size=100        # Increased from 80
+                max_font_size=100,  # Increased from 80
             ).generate(texts)
-            
-            plt.imshow(wordcloud, interpolation='bilinear', aspect='equal')
-            plt.axis('off')
+
+            plt.imshow(wordcloud, interpolation="bilinear", aspect="equal")
+            plt.axis("off")
             # Make title more prominent
-            plt.title(f'Misclassified Words for True Label: {true_label}', 
-                     pad=25,              # Increased padding
-                     fontsize=16,         # Increased font size
-                     fontweight='bold',
-                     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))  # Added background
-        
+            plt.title(
+                f"Misclassified Words for True Label: {true_label}",
+                pad=25,  # Increased padding
+                fontsize=16,  # Increased font size
+                fontweight="bold",
+                bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"),
+            )  # Added background
+
         plt.tight_layout(h_pad=2.0)  # Increased padding between subplots
-        plt.savefig(output_dir / 'error_wordclouds.png', 
-                    dpi=dpi,
-                    bbox_inches='tight',
-                    facecolor='white')
+        plt.savefig(
+            output_dir / "error_wordclouds.png",
+            dpi=dpi,
+            bbox_inches="tight",
+            facecolor="white",
+        )
         plt.close()
 
         # 2. Confidence distribution for errors
         plt.figure(figsize=(10, 6))
-        sns.histplot(data=error_df, x='confidence', hue='true_label', bins=20)
-        plt.title('Confidence Distribution of Errors by True Label')
-        plt.savefig(output_dir / 'error_confidence_dist.png')
+        sns.histplot(data=error_df, x="confidence", hue="true_label", bins=20)
+        plt.title("Confidence Distribution of Errors by True Label")
+        plt.savefig(output_dir / "error_confidence_dist.png")
         plt.close()
 
         # 3. Error confusion patterns
         confusion = pd.crosstab(
-            error_df['true_label'],
-            error_df['predicted_label'],
-            values=error_df['confidence'],
-            aggfunc='mean'
+            error_df["true_label"],
+            error_df["predicted_label"],
+            values=error_df["confidence"],
+            aggfunc="mean",
         )
         plt.figure(figsize=(10, 8))
-        sns.heatmap(confusion, annot=True, fmt='.2f', cmap='YlOrRd')
-        plt.title('Average Confidence of Misclassifications')
-        plt.savefig(output_dir / 'error_confusion_patterns.png')
+        sns.heatmap(confusion, annot=True, fmt=".2f", cmap="YlOrRd")
+        plt.title("Average Confidence of Misclassifications")
+        plt.savefig(output_dir / "error_confusion_patterns.png")
         plt.close()
 
         # 4. Text length analysis
         plt.figure(figsize=(10, 6))
-        sns.boxplot(data=error_df, x='true_label', y='text_length')
-        plt.title('Text Length Distribution by True Label')
+        sns.boxplot(data=error_df, x="true_label", y="text_length")
+        plt.title("Text Length Distribution by True Label")
         plt.xticks(rotation=45)
-        plt.savefig(output_dir / 'error_length_dist.png')
+        plt.savefig(output_dir / "error_length_dist.png")
         plt.close()
 
     def analyze_confidence_thresholds(
@@ -303,8 +328,12 @@ class ModelEvaluator:
             if not any(high_conf_mask):
                 continue
 
-            filtered_preds = [p for p, m in zip(predictions, high_conf_mask) if m]
-            filtered_labels = [l for l, m in zip(labels, high_conf_mask) if m]
+            filtered_preds = [
+                pred for pred, mask in zip(predictions, high_conf_mask) if mask
+            ]
+            filtered_labels = [
+                label for label, mask in zip(labels, high_conf_mask) if mask
+            ]
 
             # Calculate metrics
             results[threshold] = {
@@ -336,10 +365,10 @@ class ModelEvaluator:
 
         error_df = pd.DataFrame(errors)
         error_df = error_df.sort_values("confidence", ascending=False)
-        
+
         # Generate error analysis plots
         self._plot_error_analysis(error_df, self.config.evaluation_dir)
-        
+
         return error_df
 
     def evaluate(
@@ -349,14 +378,15 @@ class ModelEvaluator:
         output_dir = output_dir or self.config.evaluation_dir
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Load and prepare data first
-        test_texts, test_labels, label_encoder = load_and_preprocess_data(
-            self.config, validation_mode=True
-        )
+        # Add data file logging
+        logger.info("Data file absolute path: %s", self.config.data_file.absolute())
+        logger.info("Data file exists: %s", self.config.data_file.exists())
 
-        # Create dataloader and run evaluation - remove validation_mode parameter
+        # Load and prepare data with new DataBundle return type
+        data = load_and_preprocess_data(self.config, validation_mode=True)
+
         test_dataloader = create_dataloaders(
-            test_texts, test_labels, self.config, self.config.batch_size
+            data.test_texts, data.test_labels, self.config, self.config.batch_size
         )
 
         # Run evaluation
@@ -383,9 +413,9 @@ class ModelEvaluator:
         metrics = calculate_metrics(all_labels, all_preds, self.metrics)
         results_df = pd.DataFrame(
             {
-                "text": test_texts,
-                "true_label": label_encoder.inverse_transform(all_labels),
-                "predicted_label": label_encoder.inverse_transform(all_preds),
+                "text": data.test_texts,
+                "true_label": data.label_encoder.inverse_transform(all_labels),
+                "predicted_label": data.label_encoder.inverse_transform(all_preds),
                 "confidence": [max(probs) for probs in all_probs],
             }
         )
@@ -432,24 +462,25 @@ class ModelEvaluator:
 
             # Analyze errors
             error_analysis = self.analyze_errors(
-                test_texts,
+                data.test_texts,
                 results_df["true_label"],
                 results_df["predicted_label"],
                 results_df["confidence"],
             )
             error_analysis.to_csv(output_dir / "error_analysis.csv")
-            
+
             # Add error analysis metrics to results
             error_metrics = {
-                'error_rate_by_class': (confusion_df.iloc[:-1, :-1].sum(axis=1) / 
-                                      confusion_df.iloc[:-1, -1]).to_dict(),
-                'avg_confidence_errors': error_analysis['confidence'].mean(),
-                'avg_text_length_errors': error_analysis['text_length'].mean(),
+                "error_rate_by_class": (
+                    confusion_df.iloc[:-1, :-1].sum(axis=1) / confusion_df.iloc[:-1, -1]
+                ).to_dict(),
+                "avg_confidence_errors": error_analysis["confidence"].mean(),
+                "avg_text_length_errors": error_analysis["text_length"].mean(),
             }
-            
+
             # Save error metrics
             pd.DataFrame([error_metrics]).to_csv(
-                output_dir / 'error_metrics.csv', index=False
+                output_dir / "error_metrics.csv", index=False
             )
 
         return metrics, results_df
@@ -457,22 +488,55 @@ class ModelEvaluator:
     @classmethod
     def from_config(cls, config: EvaluationConfig) -> "ModelEvaluator":
         """Create evaluator instance from configuration."""
+        # Find all model files
         model_files = list(config.best_trials_dir.glob("best_model_*.pt"))
+        
+        # Track best model and score
+        best_score = float('-inf')
+        best_model_path = None
+        found_requested = False
+        
         if model_files:
             logger.info("\nFound model files:")
             for f in model_files:
                 try:
-                    # Use safe loading for scanning
                     checkpoint = safe_load_checkpoint(f, "cpu", strict=False)
-                    logger.info(
-                        "  %s (score: %.4f)",
-                        f.name,
-                        checkpoint.get("metric_value", float("nan")),
-                    )
-                except (RuntimeError, ValueError, FileNotFoundError, KeyError) as e:
+                    score = checkpoint.get("metric_value", float("nan"))
+                    logger.info("  %s (score: %.4f)", f.name, score)
+                    
+                    # Update best if score is higher
+                    if score > best_score:
+                        best_score = score
+                        best_model_path = f
+                        
+                    # Check if this is the specifically requested model
+                    if f.name == config.best_model.name:
+                        found_requested = True
+                        requested_score = score
+                        requested_path = f
+                        
+                except Exception as e:
                     logger.warning("  Failed to load %s: %s", f.name, e)
 
-        logger.info("\nSelected model: %s", config.best_model)
+            # Decision logic for which model to use
+            if found_requested:
+                if best_score > requested_score:
+                    logger.warning(
+                        "\nNote: Requested model '%s' (score: %.4f) has lower performance than "
+                        "best found model '%s' (score: %.4f)",
+                        requested_path.name, requested_score,
+                        best_model_path.name, best_score
+                    )
+                    logger.info("Using requested model anyway. Use --best_model '%s' for better performance.", 
+                              best_model_path.name)
+                    best_model_path = requested_path
+                else:
+                    logger.info("\nUsing requested model: %s", requested_path.name)
+                    best_model_path = requested_path
+            else:
+                logger.info("\nUsing best performing model: %s", best_model_path.name)
+                config.best_model = best_model_path
+
         return cls(model_path=config.best_model, config=config)
 
     @classmethod
@@ -498,31 +562,53 @@ class ModelEvaluator:
 def main():
     """Command-line interface entry point for model evaluation."""
     parser = argparse.ArgumentParser(description="Evaluate trained BERT classifier")
-    EvaluationConfig.add_argparse_args(parser)
+
+    parser.add_argument(
+        "--output_root",
+        type=Path,
+        default=Path(CONFIG["output_root"]),  # Now CONFIG is defined
+        help="Root directory for all operations",
+    )
+    parser.add_argument(
+        "--best_model",
+        type=str,  # Changed from Path to str
+        required=True,
+        help="Model filename (relative to best_trials_dir)",
+    )
+    parser.add_argument(
+        "--verbosity",
+        type=int,
+        default=CONFIG.get("logging", {}).get("verbosity", 1),  # Get from CONFIG
+        choices=[0, 1, 2],
+        help="Verbosity level",
+    )
+
     args = parser.parse_args()
     config = EvaluationConfig.from_args(args)
-    setup_logging(config)  # Initialize logging configuration first
+    setup_logging(config)
 
-    try:
-        best_model = Path(args.best_model)
-        if not best_model.is_absolute():
-            best_model = config.output_root / best_model
+    # Resolve both paths:
+    # 1. Model checkpoint path
+    config.best_model = config.best_trials_dir / args.best_model
+    # 2. BERT encoder path
+    if not Path(config.bert_model_name).is_absolute():
+        config.bert_model_name = str(config.output_root / "bert_encoder")
 
-        logger.info(
-            f"Loading model from: {best_model}"
-        )  # Keep this single loading message
-        evaluator = ModelEvaluator(
-            model_path=best_model,  # Pass resolved path
-            config=config,
-        )
-        _, _ = evaluator.evaluate(
-            save_predictions=True, output_dir=config.evaluation_dir
-        )
-        logger.info("Evaluation completed successfully")
-    except Exception as e:
-        logger.error(f"Evaluation failed: {str(e)}", exc_info=True)
-        raise
+    logger.info("Using BERT encoder from: %s", config.bert_model_name)
+    logger.info("Loading model checkpoint from: %s", config.best_model)
 
+    # Create evaluator and run evaluation
+    evaluator = ModelEvaluator.from_config(config)
+    metrics, _ = evaluator.evaluate(save_predictions=True)
+
+    if config.verbosity > 0:  # Add this check
+        print("\nEvaluation Results:")
+        print("-" * 30)
+        for metric, value in metrics.items():
+            print(f"{metric.capitalize()}: {value:.4f}")
+
+
+# ...existing code...
 
 if __name__ == "__main__":
     main()

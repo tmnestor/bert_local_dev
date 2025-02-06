@@ -46,29 +46,27 @@ SEARCH_SPACE = {
 ### Basic Training
 ```bash
 python -m src.training.train \
-    --data_file "datafile_name.csv" \
-    --output_root "/path/to/output" \
-    --num_epochs 10 \
+    --output_root "/Users/tod/BERT_TRAINING" \
+    --num_epochs 5 \
     --batch_size 32 \
-    --verbosity 2
+    --verbosity 1 \
+    --max_seq_len 128
 ```
 
 ### Hyperparameter Optimization
 ```bash
-python -m src.tuning.optimize \
-    --data_file "datafile_name.csv" \
-    --output_root "/path/to/output" \
-    --study_name "bert_opt" \
-    --n_trials 50 \
-    --device cpu \
-    --verbosity 2
+python -m src.training.train \
+    --output_root "/Users/tod/BERT_TRAINING" \
+    --num_epochs 5 \
+    --batch_size 128 \
+    --verbosity 1 \
+    --max_seq_len 128
 ```
 ### Model Evaluation
 ```bash
 python -m src.evaluation.evaluator \
-    --data_file "datafile_name.csv" \
-    --output_root "/path/to/output" \
-    --best_model "best_trials/bert_classifier.pth"
+    --output_root "/Users/tod/BERT_TRAINING" \
+    --best_model "best_model.pt"
 ```
 ### Configuration (config.yml)
 ```yaml

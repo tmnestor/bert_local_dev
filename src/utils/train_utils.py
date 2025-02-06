@@ -1,3 +1,25 @@
+"""Utility functions for training and model management.
+
+This module provides utility functions for managing training progress, saving model
+states, and handling logging during the training process. It includes functionality
+for creating progress bars, saving model checkpoints with metadata, and formatting
+log outputs.
+
+Functions:
+    initialize_progress_bars: Creates progress bars for tracking training epochs and batches.
+    save_model_state: Saves model state dictionary along with configuration and metadata.
+    log_separator: Adds a visual separator in the log output.
+
+Example:
+    >>> epoch_pbar, batch_pbar = initialize_progress_bars(n_trials=5, num_batches=100)
+    >>> save_model_state(model.state_dict(), save_path, accuracy_score, metadata)
+    >>> log_separator(logger)
+
+Note:
+    This module requires tqdm for progress tracking and assumes a logging setup
+    through the custom logging_manager module.
+"""
+
 import logging
 from pathlib import Path
 from typing import Tuple, Optional
@@ -5,7 +27,7 @@ from typing import Tuple, Optional
 import torch
 from tqdm.auto import tqdm
 
-from ..utils.logging_manager import get_logger  # Change from setup_logger
+from src.utils.logging_manager import get_logger  # Change from setup_logger
 
 logger = get_logger(__name__)  # Change to get_logger
 
@@ -64,4 +86,16 @@ def save_model_state(
 
 
 def log_separator(logger_instance: logging.Logger) -> None:
+    """
+    Logs a visual separator line in the log file.
+
+    This function creates a separation line in the logs consisting of 80 '=' characters.
+    It adds a newline before the separator for better visual organization of log entries.
+
+    Args:
+        logger_instance (logging.Logger): The logger instance to use for logging the separator.
+
+    Returns:
+        None
+    """
     logger_instance.info("\n" + "=" * 80)
