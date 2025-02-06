@@ -28,15 +28,20 @@ Note:
 """
 
 import argparse
+import logging
+import warnings
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
+import torch.jit
 from sklearn.metrics import accuracy_score, f1_score
 from tqdm.auto import tqdm
 from wordcloud import WordCloud
@@ -51,7 +56,41 @@ from src.utils.logging_manager import (
 from src.utils.metrics import calculate_metrics
 from src.utils.model_loading import safe_load_checkpoint
 
+# Configure matplotlib once at module level
+plt.switch_backend("agg")  # Use non-interactive backend
+mpl.use("agg")  # Force agg backend
+mpl.rcParams["figure.max_open_warning"] = 0  # Disable max figure warning
+
 logger = get_logger(__name__)  # Change to get_logger
+
+
+@contextmanager
+def suppress_evaluation_warnings():
+    """Temporarily suppress specific warnings during evaluation."""
+    with warnings.catch_warnings():
+        # Suppress specific warning types
+        warnings.filterwarnings("ignore", category=UserWarning)
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
+        # Suppress specific pandas/numpy warnings
+        warnings.filterwarnings("ignore", module="pandas")
+        warnings.filterwarnings("ignore", module="numpy")
+        # Suppress matplotlib warnings
+        warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+        warnings.filterwarnings(
+            "ignore", message=".*weights_only.*"
+        )  # Add torch load warning
+        # Suppress backend and locator warnings
+        mpl.logging.getLogger("matplotlib").setLevel(logging.WARNING)
+        mpl.logging.getLogger("matplotlib.ticker").disabled = True
+        mpl.logging.getLogger("matplotlib.font_manager").disabled = True
+        mpl.logging.getLogger("matplotlib.backends").disabled = True
+        yield
+        # Re-enable logging after the context
+        mpl.logging.getLogger("matplotlib").setLevel(logging.INFO)
+        mpl.logging.getLogger("matplotlib.ticker").disabled = False
+        mpl.logging.getLogger("matplotlib.font_manager").disabled = False
+        mpl.logging.getLogger("matplotlib.backends").disabled = False
 
 
 class ModelEvaluator:
@@ -102,28 +141,43 @@ class ModelEvaluator:
     def _load_model(self) -> None:
         """Load trained model from checkpoint."""
         try:
-            # Remove redundant logging since this is already logged in main()
             checkpoint = torch.load(
                 self.config.best_model, map_location=self.config.device
             )
 
-            # Get classifier config and ensure it exists
+            # More flexible state dict loading
+            state_dict = None
+            for key in ["model_state", "model_state_dict", "state_dict"]:
+                if key in checkpoint:
+                    state_dict = checkpoint[key]
+                    logger.debug("Found model state using key: %s", key)
+                    break
+
+            if state_dict is None:
+                # Debug checkpoint contents
+                logger.error(
+                    "Available keys in checkpoint: %s", list(checkpoint.keys())
+                )
+                raise ValueError("No model state found in checkpoint under known keys")
+
+            # Get classifier config with more flexible fallbacks
+            classifier_config = None
             if "config" in checkpoint:
                 classifier_config = checkpoint["config"]
-                if (
-                    isinstance(classifier_config, dict)
-                    and "classifier_config" in classifier_config
-                ):
-                    classifier_config = classifier_config["classifier_config"]
-            else:
-                raise ValueError("Checkpoint missing classifier configuration")
+            elif "hyperparameters" in checkpoint:
+                classifier_config = checkpoint["hyperparameters"]
 
-            # Debug log only configuration details, not loading message
-            if self.config.verbosity > 1:  # Only show in debug mode
-                logger.debug("\nLoaded checkpoint configuration:")
-                for k, v in classifier_config.items():
-                    logger.debug("  %s: %s", k, str(v))
+            if classifier_config is None:
+                raise ValueError("No configuration found in checkpoint")
 
+            # Extract nested config if needed
+            if (
+                isinstance(classifier_config, dict)
+                and "classifier_config" in classifier_config
+            ):
+                classifier_config = classifier_config["classifier_config"]
+
+            # Rest of loading logic remains the same
             # Extract model configuration
             num_classes = checkpoint.get("num_classes", self.config.num_classes)
 
@@ -137,14 +191,6 @@ class ModelEvaluator:
             self.model = BERTClassifier(
                 self.config.bert_model_name, num_classes, classifier_config
             )
-
-            # Load state dict
-            if "model_state_dict" in checkpoint:
-                state_dict = checkpoint["model_state_dict"]
-            elif "state_dict" in checkpoint:
-                state_dict = checkpoint["state_dict"]
-            else:
-                raise ValueError("No state dict found in checkpoint")
 
             # Verify state dict matches
             current_state = self.model.state_dict()
@@ -363,11 +409,23 @@ class ModelEvaluator:
                 # Add text length as potential feature
                 errors["text_length"].append(len(text.split()))
 
-        error_df = pd.DataFrame(errors)
-        error_df = error_df.sort_values("confidence", ascending=False)
-
-        # Generate error analysis plots
-        self._plot_error_analysis(error_df, self.config.evaluation_dir)
+        # Create error_df with default empty DataFrame if no errors found
+        if not errors:
+            logger.info("No errors found in evaluation")
+            error_df = pd.DataFrame(
+                columns=[
+                    "text",
+                    "true_label",
+                    "predicted_label",
+                    "confidence",
+                    "text_length",
+                ]
+            )
+        else:
+            error_df = pd.DataFrame(errors)
+            error_df = error_df.sort_values("confidence", ascending=False)
+            # Generate error analysis plots only if there are errors
+            self._plot_error_analysis(error_df, self.config.evaluation_dir)
 
         return error_df
 
@@ -375,168 +433,141 @@ class ModelEvaluator:
         self, save_predictions: bool = True, output_dir: Optional[Path] = None
     ) -> Tuple[Dict[str, float], pd.DataFrame]:
         """Evaluate model on test dataset."""
-        output_dir = output_dir or self.config.evaluation_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
+        with suppress_evaluation_warnings():
+            output_dir = output_dir or self.config.evaluation_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Add data file logging
-        logger.info("Data file absolute path: %s", self.config.data_file.absolute())
-        logger.info("Data file exists: %s", self.config.data_file.exists())
+            # Add data file logging
+            logger.info("Data file absolute path: %s", self.config.data_file.absolute())
+            logger.info("Data file exists: %s", self.config.data_file.exists())
 
-        # Load and prepare data with new DataBundle return type
-        data = load_and_preprocess_data(self.config, validation_mode=True)
+            # Load and prepare data with new DataBundle return type
+            data = load_and_preprocess_data(self.config, validation_mode=True)
 
-        test_dataloader = create_dataloaders(
-            data.test_texts, data.test_labels, self.config, self.config.batch_size
-        )
+            test_dataloader = create_dataloaders(
+                data.test_texts, data.test_labels, self.config, self.config.batch_size
+            )
 
-        # Run evaluation
-        all_preds = []
-        all_labels = []
-        all_probs = []
+            # Run evaluation
+            all_preds = []
+            all_labels = []
+            all_probs = []
 
-        self.model.eval()
-        with torch.no_grad():
-            for batch in tqdm(test_dataloader, desc="Evaluating"):
-                input_ids = batch["input_ids"].to(self.device)
-                attention_mask = batch["attention_mask"].to(self.device)
-                labels = batch["label"]
+            self.model.eval()
+            with torch.no_grad():
+                for batch in tqdm(test_dataloader, desc="Evaluating"):
+                    input_ids = batch["input_ids"].to(self.device)
+                    attention_mask = batch["attention_mask"].to(self.device)
+                    labels = batch["label"]
 
-                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-                probs = torch.softmax(outputs, dim=1)
-                preds = torch.argmax(probs, dim=1)
+                    outputs = self.model(
+                        input_ids=input_ids, attention_mask=attention_mask
+                    )
+                    probs = torch.softmax(outputs, dim=1)
+                    preds = torch.argmax(probs, dim=1)
 
-                all_preds.extend(preds.cpu().tolist())
-                all_labels.extend(labels.tolist())
-                all_probs.extend(probs.cpu().tolist())
+                    all_preds.extend(preds.cpu().tolist())
+                    all_labels.extend(labels.tolist())
+                    all_probs.extend(probs.cpu().tolist())
 
-        # Calculate metrics and create results DataFrame
-        metrics = calculate_metrics(all_labels, all_preds, self.metrics)
-        results_df = pd.DataFrame(
-            {
-                "text": data.test_texts,
-                "true_label": data.label_encoder.inverse_transform(all_labels),
-                "predicted_label": data.label_encoder.inverse_transform(all_preds),
-                "confidence": [max(probs) for probs in all_probs],
-            }
-        )
+            # Calculate metrics and create results DataFrame
+            metrics = calculate_metrics(all_labels, all_preds, self.metrics)
+            results_df = pd.DataFrame(
+                {
+                    "text": data.test_texts,
+                    "true_label": data.label_encoder.inverse_transform(all_labels),
+                    "predicted_label": data.label_encoder.inverse_transform(all_preds),
+                    "confidence": [max(probs) for probs in all_probs],
+                }
+            )
 
-        # Create confusion matrix
-        confusion_df = pd.crosstab(
-            results_df["true_label"], results_df["predicted_label"], margins=True
-        )
+            # Create confusion matrix
+            confusion_df = pd.crosstab(
+                results_df["true_label"], results_df["predicted_label"], margins=True
+            )
 
-        # Show results based on verbosity
-        if self.config.verbosity > 0:
-            tqdm.write("\nEvaluation Results:")
-            tqdm.write("-" * 30)
-            for metric, value in metrics.items():
-                tqdm.write(f"{metric.capitalize()}: {value:.4f}")
-
-            if self.config.verbosity > 1:  # Show confusion matrix only in debug mode
-                tqdm.write("\nConfusion Matrix:")
+            # Show results based on verbosity
+            if self.config.verbosity > 0:
+                tqdm.write("\nEvaluation Results:")
                 tqdm.write("-" * 30)
-                tqdm.write("\n" + confusion_df.to_string())
+                for metric, value in metrics.items():
+                    tqdm.write(f"{metric.capitalize()}: {value:.4f}")
 
-            tqdm.write("\n" + "=" * 50)
+                if (
+                    self.config.verbosity > 1
+                ):  # Show confusion matrix only in debug mode
+                    tqdm.write("\nConfusion Matrix:")
+                    tqdm.write("-" * 30)
+                    tqdm.write("\n" + confusion_df.to_string())
 
-        if save_predictions:
-            # Save results
-            results_df.to_csv(output_dir / "predictions.csv", index=False)
-            confusion_df.to_csv(output_dir / "confusion_matrix.csv")
-            tqdm.write(f"\nDetailed results saved to: {output_dir}")
+                tqdm.write("\n" + "=" * 50)
 
-            # Plot confusion matrix
-            self._plot_confusion_matrix(
-                results_df["true_label"], results_df["predicted_label"], output_dir
-            )
+            if save_predictions:
+                # Save results
+                results_df.to_csv(output_dir / "predictions.csv", index=False)
+                confusion_df.to_csv(output_dir / "confusion_matrix.csv")
+                tqdm.write(f"\nDetailed results saved to: {output_dir}")
 
-            # Analyze confidence thresholds
-            threshold_results = self.analyze_confidence_thresholds(
-                [max(probs) for probs in all_probs],
-                all_preds,  # Add predictions parameter
-                all_labels,
-            )
-            pd.DataFrame(threshold_results).T.to_csv(
-                output_dir / "confidence_analysis.csv"
-            )
+                # Plot confusion matrix
+                self._plot_confusion_matrix(
+                    results_df["true_label"], results_df["predicted_label"], output_dir
+                )
 
-            # Analyze errors
-            error_analysis = self.analyze_errors(
-                data.test_texts,
-                results_df["true_label"],
-                results_df["predicted_label"],
-                results_df["confidence"],
-            )
-            error_analysis.to_csv(output_dir / "error_analysis.csv")
+                # Analyze confidence thresholds
+                threshold_results = self.analyze_confidence_thresholds(
+                    [max(probs) for probs in all_probs],
+                    all_preds,  # Add predictions parameter
+                    all_labels,
+                )
+                pd.DataFrame(threshold_results).T.to_csv(
+                    output_dir / "confidence_analysis.csv"
+                )
 
-            # Add error analysis metrics to results
-            error_metrics = {
-                "error_rate_by_class": (
-                    confusion_df.iloc[:-1, :-1].sum(axis=1) / confusion_df.iloc[:-1, -1]
-                ).to_dict(),
-                "avg_confidence_errors": error_analysis["confidence"].mean(),
-                "avg_text_length_errors": error_analysis["text_length"].mean(),
-            }
+                # Analyze errors
+                error_analysis = self.analyze_errors(
+                    data.test_texts,
+                    results_df["true_label"],
+                    results_df["predicted_label"],
+                    results_df["confidence"],
+                )
+                error_analysis.to_csv(output_dir / "error_analysis.csv")
 
-            # Save error metrics
-            pd.DataFrame([error_metrics]).to_csv(
-                output_dir / "error_metrics.csv", index=False
-            )
+                # Add error analysis metrics to results
+                error_metrics = {
+                    "error_rate_by_class": (
+                        confusion_df.iloc[:-1, :-1].sum(axis=1)
+                        / confusion_df.iloc[:-1, -1]
+                    ).to_dict(),
+                    "avg_confidence_errors": error_analysis["confidence"].mean(),
+                    "avg_text_length_errors": error_analysis["text_length"].mean(),
+                }
 
-        return metrics, results_df
+                # Save error metrics
+                pd.DataFrame([error_metrics]).to_csv(
+                    output_dir / "error_metrics.csv", index=False
+                )
+
+            return metrics, results_df
 
     @classmethod
     def from_config(cls, config: EvaluationConfig) -> "ModelEvaluator":
         """Create evaluator instance from configuration."""
-        # Find all model files
         model_files = list(config.best_trials_dir.glob("best_model_*.pt"))
-        
-        # Track best model and score
-        best_score = float('-inf')
-        best_model_path = None
-        found_requested = False
-        
         if model_files:
             logger.info("\nFound model files:")
             for f in model_files:
                 try:
+                    # Use safe loading for scanning
                     checkpoint = safe_load_checkpoint(f, "cpu", strict=False)
-                    score = checkpoint.get("metric_value", float("nan"))
-                    logger.info("  %s (score: %.4f)", f.name, score)
-                    
-                    # Update best if score is higher
-                    if score > best_score:
-                        best_score = score
-                        best_model_path = f
-                        
-                    # Check if this is the specifically requested model
-                    if f.name == config.best_model.name:
-                        found_requested = True
-                        requested_score = score
-                        requested_path = f
-                        
-                except Exception as e:
+                    logger.info(
+                        "  %s (score: %.4f)",
+                        f.name,
+                        checkpoint.get("metric_value", float("nan")),
+                    )
+                except (RuntimeError, ValueError, FileNotFoundError, KeyError) as e:
                     logger.warning("  Failed to load %s: %s", f.name, e)
 
-            # Decision logic for which model to use
-            if found_requested:
-                if best_score > requested_score:
-                    logger.warning(
-                        "\nNote: Requested model '%s' (score: %.4f) has lower performance than "
-                        "best found model '%s' (score: %.4f)",
-                        requested_path.name, requested_score,
-                        best_model_path.name, best_score
-                    )
-                    logger.info("Using requested model anyway. Use --best_model '%s' for better performance.", 
-                              best_model_path.name)
-                    best_model_path = requested_path
-                else:
-                    logger.info("\nUsing requested model: %s", requested_path.name)
-                    best_model_path = requested_path
-            else:
-                logger.info("\nUsing best performing model: %s", best_model_path.name)
-                config.best_model = best_model_path
-
+        logger.info("\nSelected model: %s", config.best_model)
         return cls(model_path=config.best_model, config=config)
 
     @classmethod
