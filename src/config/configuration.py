@@ -325,7 +325,7 @@ class EvaluationConfig(ModelConfig):
 @dataclass
 class PredictionConfig(ModelConfig):
     """Configuration for prediction tasks."""
-    
+
     best_model: Path = field(default=None)  # Like EvaluationConfig
     output_dir: Path = field(init=False)
 

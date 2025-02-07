@@ -2,7 +2,7 @@
 
 This module provides prediction functionality for trained BERT classifiers:
 - Model loading and configuration
-- Batch prediction generation 
+- Batch prediction generation
 - Confidence score calculation
 - Results saving with original data
 
@@ -21,22 +21,25 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
-from ..config.configuration import CONFIG, PredictionConfig
+from ..config.configuration import PredictionConfig
 from ..data_utils import create_dataloaders, load_and_preprocess_data
 from ..evaluation.evaluator import ModelEvaluator, suppress_evaluation_warnings
 from ..utils.logging_manager import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
+
 class Predictor(ModelEvaluator):
     """Handles model prediction without evaluation."""
-    
-    def predict(self, save_predictions: bool = True, output_file: str = "predictions.csv") -> pd.DataFrame:
+
+    def predict(
+        self, save_predictions: bool = True, output_file: str = "predictions.csv"
+    ) -> pd.DataFrame:
         """Generate predictions for input data."""
         with suppress_evaluation_warnings():
             # Load data and get label encoder
             data = load_and_preprocess_data(self.config, validation_mode=True)
-            
+
             # Load prediction data
             try:
                 df = pd.read_csv(self.config.data_file)
@@ -49,20 +52,22 @@ class Predictor(ModelEvaluator):
                 texts=texts,
                 labels=[0] * len(texts),  # Dummy labels
                 config=self.config,
-                batch_size=self.config.batch_size
+                batch_size=self.config.batch_size,
             )
 
             # Generate predictions
             all_preds = []
             all_probs = []
-            
+
             self.model.eval()
             with torch.no_grad():
                 for batch in tqdm(test_dataloader, desc="Generating predictions"):
                     input_ids = batch["input_ids"].to(self.device)
                     attention_mask = batch["attention_mask"].to(self.device)
 
-                    outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                    outputs = self.model(
+                        input_ids=input_ids, attention_mask=attention_mask
+                    )
                     probs = torch.softmax(outputs, dim=1)
                     preds = torch.argmax(probs, dim=1)
 
@@ -73,7 +78,7 @@ class Predictor(ModelEvaluator):
             df["predicted_label_id"] = all_preds
             df["predicted_label"] = data.label_encoder.inverse_transform(all_preds)
             df["confidence"] = [max(probs) for probs in all_probs]
-            
+
             if save_predictions:
                 output_path = self.config.output_dir / output_file
                 df.to_csv(output_path, index=False)
@@ -87,10 +92,13 @@ class Predictor(ModelEvaluator):
         # Just use config.best_model which is already a full path
         return cls(model_path=config.best_model, config=config)
 
+
 def main():
     """Command-line interface for prediction."""
-    parser = argparse.ArgumentParser(description="Generate predictions using trained BERT classifier")
-    
+    parser = argparse.ArgumentParser(
+        description="Generate predictions using trained BERT classifier"
+    )
+
     PredictionConfig.add_argparse_args(parser)
     args = parser.parse_args()
 
@@ -107,15 +115,18 @@ def main():
 
     logger.info("Using BERT encoder from: %s", config.bert_model_name)
     logger.info("Loading model from: %s", config.best_model)
-    
+
     # Create predictor and generate predictions
     predictor = Predictor.from_config(config)
-    predictions_df = predictor.predict(save_predictions=True, output_file=args.output_file)
-    
+    predictions_df = predictor.predict(
+        save_predictions=True, output_file=args.output_file
+    )
+
     if config.verbosity > 0:
         logger.info("\nPrediction Summary:")
         logger.info("Total predictions: %d", len(predictions_df))
         logger.info("Average confidence: %.4f", predictions_df["confidence"].mean())
+
 
 if __name__ == "__main__":
     main()
