@@ -55,18 +55,27 @@ python -m src.training.train \
 
 ### Hyperparameter Optimization
 ```bash
-python -m src.training.train \
-    --output_root "/Users/tod/BERT_TRAINING" \
-    --num_epochs 5 \
-    --batch_size 128 \
-    --verbosity 1 \
-    --max_seq_len 128
+python -m src.tuning.optimize \
+  --output_root "/Users/tod/BERT_TRAINING" \
+  --study_name "bert_opt" \
+  --n_trials 10 \
+  --max_seq_len 64 \
+  --verbosity 2
 ```
 ### Model Evaluation
 ```bash
 python -m src.evaluation.evaluator \
     --output_root "/Users/tod/BERT_TRAINING" \
     --best_model "best_model.pt"
+```
+
+### Model Prediction
+```bash
+python -m src.prediction.predict \
+    --output_root "/Users/tod/BERT_TRAINING" \
+    --best_model best_model.pt \
+    --data_file test.csv \
+    --output_file predictions.csv
 ```
 ### Configuration (config.yml)
 ```yaml

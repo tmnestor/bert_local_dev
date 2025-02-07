@@ -42,7 +42,11 @@ import pandas as pd
 import seaborn as sns
 import torch
 import torch.jit
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    classification_report,
+)  # Add back classification_report
 from tqdm.auto import tqdm
 from wordcloud import WordCloud
 
@@ -361,6 +365,39 @@ class ModelEvaluator:
         plt.savefig(output_dir / "error_length_dist.png")
         plt.close()
 
+    def _plot_classification_report(
+        self, report_df: pd.DataFrame, output_dir: Path
+    ) -> None:
+        """Generate heatmap visualization of classification report metrics."""
+        plt.figure(figsize=(12, 8))
+
+        # Drop support column and last rows (avg rows) for the heatmap
+        metrics_df = report_df.drop("support", axis=1).drop(
+            ["accuracy", "macro avg", "weighted avg"]
+        )
+
+        # Create heatmap
+        sns.heatmap(
+            metrics_df,
+            annot=True,
+            fmt=".2f",
+            cmap="RdYlBu",
+            center=0.5,
+            vmin=0,
+            vmax=1,
+            square=True,
+            cbar_kws={"label": "Score"},
+        )
+
+        plt.title("Classification Report Heatmap")
+        plt.xlabel("Metrics")
+        plt.ylabel("Classes")
+        plt.tight_layout()
+
+        # Save plot
+        plt.savefig(output_dir / "classification_report_heatmap.png")
+        plt.close()
+
     def analyze_confidence_thresholds(
         self, probabilities: List[float], predictions: List[int], labels: List[int]
     ) -> Dict[float, Dict[str, float]]:
@@ -472,6 +509,22 @@ class ModelEvaluator:
 
             # Calculate metrics and create results DataFrame
             metrics = calculate_metrics(all_labels, all_preds, self.metrics)
+
+            # Generate sklearn classification report
+            report = classification_report(
+                all_labels,
+                all_preds,
+                target_names=data.label_encoder.classes_,
+                output_dict=True,
+            )
+
+            # Convert to DataFrame and save
+            report_df = pd.DataFrame(report).transpose()
+            if save_predictions:
+                report_df.to_csv(output_dir / "sklearn_classification_report.csv")
+                # Add visualization
+                self._plot_classification_report(report_df, output_dir)
+
             results_df = pd.DataFrame(
                 {
                     "text": data.test_texts,

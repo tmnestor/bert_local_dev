@@ -322,6 +322,43 @@ class EvaluationConfig(ModelConfig):
         )
 
 
+@dataclass
+class PredictionConfig(ModelConfig):
+    """Configuration for prediction tasks."""
+    
+    best_model: Path = field(default=None)  # Like EvaluationConfig
+    output_dir: Path = field(init=False)
+
+    def __post_init__(self):
+        """Initialize paths after parent initialization."""
+        super().__post_init__()
+        self.output_dir = self.predictions_dir = self.output_root / "predictions"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Don't set best_model path here - let main() handle it
+
+    @classmethod
+    def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Add prediction-specific command line arguments."""
+        # First add parent's arguments
+        super().add_argparse_args(parser)
+
+        # Add prediction-specific arguments
+        predict_group = parser.add_argument_group("Prediction")
+        predict_group.add_argument(
+            "--best_model",
+            type=str,
+            required=True,
+            help="Model file name (relative to best_trials_dir)",
+        )
+        predict_group.add_argument(
+            "--output_file",
+            type=str,
+            default="predictions.csv",
+            help="Output filename for predictions",
+        )
+
+
 def get_config(args: Optional[argparse.Namespace] = None) -> ModelConfig:
     """Central configuration factory function.
 

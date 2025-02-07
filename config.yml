@@ -7,7 +7,6 @@ dirs: &dirs
   evaluation: evaluation_results
   logs: logs
   data: &data_dir data
-  bert_encoder: bert_encoder
 
 # Define absolute paths using anchors
 paths:
@@ -22,6 +21,7 @@ data:
     train: !join [*output_root, /, *data_dir, /, train.csv]
     val: !join [*output_root, /, *data_dir, /, val.csv]
     test: !join [*output_root, /, *data_dir, /, test.csv]
+    predict: !join [*output_root, /, *data_dir, /, test.csv]  # Default prediction file
 
 # Model defaults
 model:
