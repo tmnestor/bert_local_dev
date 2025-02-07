@@ -36,7 +36,7 @@ SEARCH_SPACE = {
     'lr': (1e-6, 5e-3),                    # Log scale
     'weight_decay': (1e-8, 1e-2),          # Log scale
     'warmup_ratio': (0.0, 0.3),            # LR schedule
-    'activation': ['relu', 'gelu', 'silu', 'tanh']
+    'activation': ["relu", "gelu", "silu", "elu", "tanh", "leaky_relu", "prelu"]
 }
 ```
 
@@ -84,6 +84,15 @@ python -m src.prediction.predict \
     --data_file test.csv \
     --output_file predictions.csv
 ```
+
+### Configuration Override Precedence
+Values are resolved in this order (highest to lowest priority):
+
+1. Command-line arguments
+2. config.yml values
+3. Default values in dataclasses
+
+
 ### Configuration (config.yml)
 ```yaml
 model:
@@ -107,7 +116,7 @@ optimizer:
   betas: (0.656, 0.999)
 ```
 
-## Advanced Features
+## Advanced Hyperparameter Tuning Features
 
 ### Population Based Training
 The PBT implementation maintains a population of 4 models training in parallel:
