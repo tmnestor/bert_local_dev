@@ -1,8 +1,15 @@
 # BERT Text Classification Framework
 
-Advanced BERT fine-tuning framework featuring Population Based Training (PBT) and comprehensive hyperparameter optimization.
+A production-ready BERT fine-tuning framework for text classification tasks, featuring comprehensive configuration management, evaluation metrics, and optimization capabilities.
 
-## Key Features
+## Core Features
+
+### 1. Configuration Management
+- YAML-based configuration with anchor support
+- Environment-aware path resolution
+- Type-safe configuration classes
+- Command-line argument integration
+- Configuration validation
 
 ### Population Based Training (PBT)
 - Dynamic hyperparameter adaptation during training
@@ -151,30 +158,32 @@ text,category
 ```
 src/
 ├── __init__.py
-├── config                # Configuration management
+├── config
 │   ├── __init__.py
 │   ├── base_config.py
-│   ├── config.py
-│   └── defaults.py
-├── data_utils            # Data handling and splits
+│   └── configuration.py
+├── data_utils
 │   ├── __init__.py
 │   ├── dataset.py
 │   ├── loaders.py
 │   ├── splitter.py
 │   └── validation.py
-├── evaluation            #model evaluation
+├── evaluation
 │   └── evaluator.py
-├── models                # BERT classifier architecture
+├── models
 │   ├── __init__.py
 │   └── model.py
-├── training              # Training implementation
+├── prediction
+│   ├── __init__.py
+│   └── predict.py
+├── training
 │   ├── __init__.py
 │   ├── train.py
 │   └── trainer.py
-├── tuning                # PBT and optimization
+├── tuning
 │   ├── __init__.py
 │   └── optimize.py
-└── utils                 # Common utilities
+└── utils
     ├── logging_manager.py
     ├── metrics.py
     ├── model_loading.py
