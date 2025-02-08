@@ -1,7 +1,8 @@
 import logging
 import logging.config
 from typing import TYPE_CHECKING
-
+import time
+from pathlib import Path
 
 if TYPE_CHECKING:
     from ..config.config import ModelConfig
@@ -17,12 +18,33 @@ def setup_logging(config: "ModelConfig") -> None:
     }
 
     log_level = log_levels.get(config.verbosity, logging.INFO)
+    
+    # Ensure logs directory exists
+    config.logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create a more descriptive log filename by parsing the module name differently
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    
+    # Get operation name from config class name
+    config_class_name = config.__class__.__name__.lower()
+    operation_map = {
+        'modelconfig': 'training',
+        'evaluationconfig': 'evaluation',
+        'predictionconfig': 'prediction',
+    }
+    operation = operation_map.get(config_class_name, 'unknown')
+        
+    log_file = config.logs_dir / f"{operation}_{timestamp}.log"
 
-    # Configure root logger
+    # Configure logging with both console and file handlers
     logging.basicConfig(
         level=log_level,
-        format="%(message)s",  # Simplified format for evaluation output
-        force=True,  # Override any existing configuration
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),  # Console handler
+            logging.FileHandler(filename=log_file)  # File handler
+        ],
+        force=True  # Override any existing configuration
     )
 
     # Set level for specific loggers

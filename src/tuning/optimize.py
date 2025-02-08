@@ -338,6 +338,12 @@ def run_optimization(
             n_trials=n_trials or model_config.n_trials,
             timeout=timeout,
             callbacks=[
+                # Add new callback for logging best info
+                lambda study, trial: (
+                    log_current_best(global_best_info, experiment_name) 
+                    if trial.value and trial.value > study.user_attrs.get("best_value", float("-inf"))
+                    else None
+                ),
                 save_trial_callback(experiment_name, model_config, global_best_info),
                 lambda study, trial: pbt_manager.update_population(  # Add PBT callback
                     trial.value or float("-inf"), trial.params, trial.number
@@ -594,28 +600,33 @@ def get_optimizer_config(trial, optimizer_name, lr):  # Changed parameter name
     return optimizer_config
 
 
-def log_current_best(best_info: Dict[str, Any]) -> None:
-    """Log the current best trial configuration in a standardized format."""
-    if not best_info["model_info"]:
+def log_current_best(best_info: Dict[str, Any], study_name: str) -> None:
+    """Log current best trial information in a structured format."""
+    if not best_info.get("model_info"):
         return
 
+    separator = "=" * 80
     info = best_info["model_info"]
-    params = info["params"]
-    clf_config = info["config"]
-
-    logger.info("\nCurrent Best Trial Configuration:")
-    logger.info("=" * 50)
-    logger.info("Trial Number: %d", info["trial_number"])
-    logger.info("Score: %.4f", best_info["score"])
-    logger.info("\nHyperparameters:")
-    logger.info("  batch_size: %d", params["batch_size"])
-    logger.info("  hidden_layers: %s", clf_config["hidden_dim"])
-    logger.info("  dropout_rate: %.4f", clf_config["dropout_rate"])
-    logger.info("  weight_decay: %.6f", clf_config["weight_decay"])
-    logger.info("  warmup_ratio: %.2f", clf_config["warmup_ratio"])
-    logger.info("  optimizer: %s", clf_config["optimizer"])
-    logger.info("  lr: %.6f", clf_config["lr"])  # Changed from learning_rate to lr
-    logger.info("=" * 50)
+    
+    log_msg = [
+        "\nCurrent Best Trial Configuration",
+        separator,
+        f"Study: {study_name}",
+        f"Trial: {info['trial_number']} (score: {best_info['score']:.4f})",
+        "\nModel Architecture:",
+        f"  Hidden layers: {info['config']['hidden_dim']}",
+        f"  Activation: {info['config']['activation']}",
+        f"  Dropout rate: {info['config']['dropout_rate']:.4f}",
+        "\nOptimizer Settings:",
+        f"  Type: {info['config']['optimizer']}",
+        f"  Learning rate: {info['config']['lr']:.6f}",
+        f"  Weight decay: {info['config']['weight_decay']:.6f}",
+        f"  Warmup ratio: {info['config']['warmup_ratio']:.4f}",
+        separator,
+    ]
+    
+    # Print to console and log file
+    logger.info("\n".join(log_msg))
 
 
 def log_trial_config(
