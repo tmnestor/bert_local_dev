@@ -288,6 +288,7 @@ class EvaluationConfig(ModelConfig):
     metrics: List[str] = field(
         default_factory=lambda: ["accuracy", "f1", "precision", "recall"]
     )
+    n_folds: int = field(default=7)  # Add k-fold parameter
 
     DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
 
@@ -319,6 +320,12 @@ class EvaluationConfig(ModelConfig):
             default=cls.DEFAULT_METRICS,
             choices=cls.DEFAULT_METRICS,
             help="Metrics to compute",
+        )
+        eval_group.add_argument(
+            "--n_folds", 
+            type=int,
+            default=7,
+            help="Number of cross-validation folds"
         )
 
 

@@ -49,6 +49,7 @@ from sklearn.metrics import (
 )  # Add back classification_report
 from tqdm.auto import tqdm
 from wordcloud import WordCloud
+from sklearn.model_selection import KFold
 
 from src.config.configuration import CONFIG, EvaluationConfig, ModelConfig
 from src.data_utils import create_dataloaders, load_and_preprocess_data
@@ -469,138 +470,110 @@ class ModelEvaluator:
     def evaluate(
         self, save_predictions: bool = True, output_dir: Optional[Path] = None
     ) -> Tuple[Dict[str, float], pd.DataFrame]:
-        """Evaluate model on test dataset."""
+        """Evaluate model using k-fold cross validation."""
         with suppress_evaluation_warnings():
             output_dir = output_dir or self.config.evaluation_dir
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Add data file logging
-            logger.info("Data file absolute path: %s", self.config.data_file.absolute())
-            logger.info("Data file exists: %s", self.config.data_file.exists())
-
-            # Load and prepare data with new DataBundle return type
+            # Load all data
             data = load_and_preprocess_data(self.config, validation_mode=True)
+            
+            # Initialize k-fold cross validation
+            kf = KFold(n_splits=self.config.n_folds, shuffle=True, random_state=42)
+            
+            # Store metrics for each fold
+            fold_metrics = []
+            all_predictions = []
+            
+            # Run k-fold cross validation
+            for fold, (train_idx, val_idx) in enumerate(kf.split(data.test_texts)):
+                logger.info(f"\nEvaluating fold {fold + 1}/{self.config.n_folds}")
+                
+                # Split data for this fold
+                fold_texts = [data.test_texts[i] for i in val_idx]
+                fold_labels = [data.test_labels[i] for i in val_idx]
+                
+                # Create dataloader for this fold
+                fold_dataloader = create_dataloaders(
+                    fold_texts, 
+                    fold_labels,
+                    self.config,
+                    self.config.batch_size
+                )
+                
+                # Run evaluation on this fold
+                fold_preds = []
+                fold_probs = []
+                
+                self.model.eval()
+                with torch.no_grad():
+                    for batch in fold_dataloader:
+                        input_ids = batch["input_ids"].to(self.device)
+                        attention_mask = batch["attention_mask"].to(self.device)
+                        
+                        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                        probs = torch.softmax(outputs, dim=1)
+                        preds = torch.argmax(probs, dim=1)
+                        
+                        fold_preds.extend(preds.cpu().tolist())
+                        fold_probs.extend(probs.cpu().tolist())
 
-            test_dataloader = create_dataloaders(
-                data.test_texts, data.test_labels, self.config, self.config.batch_size
-            )
-
-            # Run evaluation
-            all_preds = []
-            all_labels = []
-            all_probs = []
-
-            self.model.eval()
-            with torch.no_grad():
-                for batch in tqdm(test_dataloader, desc="Evaluating"):
-                    input_ids = batch["input_ids"].to(self.device)
-                    attention_mask = batch["attention_mask"].to(self.device)
-                    labels = batch["label"]
-
-                    outputs = self.model(
-                        input_ids=input_ids, attention_mask=attention_mask
+                # Calculate metrics for this fold
+                fold_metrics.append(calculate_metrics(fold_labels, fold_preds, self.metrics))
+                
+                # Store predictions
+                fold_df = pd.DataFrame({
+                    "text": fold_texts,
+                    "true_label": data.label_encoder.inverse_transform(fold_labels),
+                    "predicted_label": data.label_encoder.inverse_transform(fold_preds),
+                    "confidence": [max(probs) for probs in fold_probs],
+                    "fold": fold + 1
+                })
+                all_predictions.append(fold_df)
+                
+                # Save fold-specific results
+                if save_predictions:
+                    fold_dir = output_dir / f"fold_{fold + 1}"
+                    fold_dir.mkdir(exist_ok=True)
+                    fold_df.to_csv(fold_dir / "predictions.csv", index=False)
+                    
+                    # Generate fold-specific visualizations
+                    self._plot_confusion_matrix(
+                        fold_df["true_label"], 
+                        fold_df["predicted_label"], 
+                        fold_dir
                     )
-                    probs = torch.softmax(outputs, dim=1)
-                    preds = torch.argmax(probs, dim=1)
+                    
+                    self.analyze_errors(
+                        fold_texts,
+                        fold_df["true_label"],
+                        fold_df["predicted_label"],
+                        fold_df["confidence"]
+                    ).to_csv(fold_dir / "error_analysis.csv")
 
-                    all_preds.extend(preds.cpu().tolist())
-                    all_labels.extend(labels.tolist())
-                    all_probs.extend(probs.cpu().tolist())
-
-            # Calculate metrics and create results DataFrame
-            metrics = calculate_metrics(all_labels, all_preds, self.metrics)
-
-            # Generate sklearn classification report
-            report = classification_report(
-                all_labels,
-                all_preds,
-                target_names=data.label_encoder.classes_,
-                output_dict=True,
-            )
-
-            # Convert to DataFrame and save
-            report_df = pd.DataFrame(report).transpose()
-            if save_predictions:
-                report_df.to_csv(output_dir / "sklearn_classification_report.csv")
-                # Add visualization
-                self._plot_classification_report(report_df, output_dir)
-
-            results_df = pd.DataFrame(
-                {
-                    "text": data.test_texts,
-                    "true_label": data.label_encoder.inverse_transform(all_labels),
-                    "predicted_label": data.label_encoder.inverse_transform(all_preds),
-                    "confidence": [max(probs) for probs in all_probs],
-                }
-            )
-
-            # Create confusion matrix
-            confusion_df = pd.crosstab(
-                results_df["true_label"], results_df["predicted_label"], margins=True
-            )
-
-            # Show results based on verbosity
+            # Aggregate results across folds
+            results_df = pd.concat(all_predictions, ignore_index=True)
+            
+            # Calculate mean and std of metrics across folds
+            mean_metrics = {metric: np.mean([fold[metric] for fold in fold_metrics]) 
+                          for metric in self.metrics}
+            std_metrics = {f"{metric}_std": np.std([fold[metric] for fold in fold_metrics]) 
+                         for metric in self.metrics}
+            
+            # Combine means and stds
+            final_metrics = {**mean_metrics, **std_metrics}
+            
             if self.config.verbosity > 0:
-                tqdm.write("\nEvaluation Results:")
-                tqdm.write("-" * 30)
-                for metric, value in metrics.items():
-                    tqdm.write(f"{metric.capitalize()}: {value:.4f}")
-
-                if (
-                    self.config.verbosity > 1
-                ):  # Show confusion matrix only in debug mode
-                    tqdm.write("\nConfusion Matrix:")
-                    tqdm.write("-" * 30)
-                    tqdm.write("\n" + confusion_df.to_string())
-
-                tqdm.write("\n" + "=" * 50)
-
+                logger.info("\nCross Validation Results:")
+                for metric in self.metrics:
+                    logger.info(f"{metric}: {mean_metrics[metric]:.4f} ± {std_metrics[f'{metric}_std']:.4f}")
+            
             if save_predictions:
-                # Save results
-                results_df.to_csv(output_dir / "predictions.csv", index=False)
-                confusion_df.to_csv(output_dir / "confusion_matrix.csv")
-                tqdm.write(f"\nDetailed results saved to: {output_dir}")
+                # Save aggregated results
+                results_df.to_csv(output_dir / "all_predictions.csv", index=False)
+                pd.DataFrame([final_metrics]).to_csv(output_dir / "cv_metrics.csv", index=False)
 
-                # Plot confusion matrix
-                self._plot_confusion_matrix(
-                    results_df["true_label"], results_df["predicted_label"], output_dir
-                )
-
-                # Analyze confidence thresholds
-                threshold_results = self.analyze_confidence_thresholds(
-                    [max(probs) for probs in all_probs],
-                    all_preds,  # Add predictions parameter
-                    all_labels,
-                )
-                pd.DataFrame(threshold_results).T.to_csv(
-                    output_dir / "confidence_analysis.csv"
-                )
-
-                # Analyze errors
-                error_analysis = self.analyze_errors(
-                    data.test_texts,
-                    results_df["true_label"],
-                    results_df["predicted_label"],
-                    results_df["confidence"],
-                )
-                error_analysis.to_csv(output_dir / "error_analysis.csv")
-
-                # Add error analysis metrics to results
-                error_metrics = {
-                    "error_rate_by_class": (
-                        confusion_df.iloc[:-1, :-1].sum(axis=1)
-                        / confusion_df.iloc[:-1, -1]
-                    ).to_dict(),
-                    "avg_confidence_errors": error_analysis["confidence"].mean(),
-                    "avg_text_length_errors": error_analysis["text_length"].mean(),
-                }
-
-                # Save error metrics
-                pd.DataFrame([error_metrics]).to_csv(
-                    output_dir / "error_metrics.csv", index=False
-                )
-
-            return metrics, results_df
+            return final_metrics, results_df
 
     @classmethod
     def from_config(cls, config: EvaluationConfig) -> "ModelEvaluator":
@@ -665,6 +638,14 @@ def main():
         default=CONFIG.get("logging", {}).get("verbosity", 1),  # Get from CONFIG
         choices=[0, 1, 2],
         help="Verbosity level",
+    )
+
+    # Add n_folds argument
+    parser.add_argument(
+        "--n_folds",
+        type=int,
+        default=7,
+        help="Number of cross-validation folds"
     )
 
     args = parser.parse_args()
