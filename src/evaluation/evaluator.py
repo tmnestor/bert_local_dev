@@ -370,15 +370,28 @@ class ModelEvaluator:
         self, report_df: pd.DataFrame, output_dir: Path
     ) -> None:
         """Generate heatmap visualization of classification report metrics."""
-        plt.figure(figsize=(12, 8))
+        # Create figure with explicit size
+        plt.figure(figsize=(8, 6))
 
         # Drop support column and last rows (avg rows) for the heatmap
         metrics_df = report_df.drop("support", axis=1).drop(
             ["accuracy", "macro avg", "weighted avg"]
         )
 
-        # Create heatmap
-        sns.heatmap(
+        # Calculate appropriate left margin based on label length
+        max_label_length = max(len(str(label)) for label in metrics_df.index)
+        left_margin = max(0.2, max_label_length * 0.02)  # Dynamic margin
+
+        # Adjust subplot parameters before creating the heatmap
+        plt.subplots_adjust(
+            left=left_margin,  # Dynamic left margin
+            right=0.9,  # Fixed right margin
+            top=0.90,  # Leave space for title
+            bottom=0.15,  # Leave space for xlabel
+        )
+
+        # Create heatmap with adjusted layout
+        ax = sns.heatmap(
             metrics_df,
             annot=True,
             fmt=".2f",
@@ -387,16 +400,27 @@ class ModelEvaluator:
             vmin=0,
             vmax=1,
             square=True,
-            cbar_kws={"label": "Score"},
+            cbar_kws={"label": "Score", "shrink": 0.8},  # Adjust colorbar size
         )
 
-        plt.title("Classification Report Heatmap")
+        plt.title("Classification Report Heatmap", pad=10)
         plt.xlabel("Metrics")
         plt.ylabel("Classes")
-        plt.tight_layout()
 
-        # Save plot
-        plt.savefig(output_dir / "classification_report_heatmap.png")
+        # Rotate x-axis labels for better readability
+        plt.xticks(rotation=45, ha="right")
+
+        # Force drawing to update layout
+        plt.draw()
+
+        # Save plot with tight bounding box
+        plt.savefig(
+            output_dir / "classification_report_heatmap.png",
+            bbox_inches="tight",
+            dpi=300,
+            pad_inches=0.2,
+            facecolor="white",
+        )
         plt.close()
 
     def analyze_confidence_thresholds(
@@ -470,108 +494,140 @@ class ModelEvaluator:
     def evaluate(
         self, save_predictions: bool = True, output_dir: Optional[Path] = None
     ) -> Tuple[Dict[str, float], pd.DataFrame]:
-        """Evaluate model using k-fold cross validation."""
+        """Evaluate model using k-fold cross validation and generate overall metrics."""
         with suppress_evaluation_warnings():
             output_dir = output_dir or self.config.evaluation_dir
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Load all data
             data = load_and_preprocess_data(self.config, validation_mode=True)
-            
+
             # Initialize k-fold cross validation
             kf = KFold(n_splits=self.config.n_folds, shuffle=True, random_state=42)
-            
+
             # Store metrics for each fold
             fold_metrics = []
             all_predictions = []
-            
+
             # Run k-fold cross validation
             for fold, (train_idx, val_idx) in enumerate(kf.split(data.test_texts)):
                 logger.info(f"\nEvaluating fold {fold + 1}/{self.config.n_folds}")
-                
+
                 # Split data for this fold
                 fold_texts = [data.test_texts[i] for i in val_idx]
                 fold_labels = [data.test_labels[i] for i in val_idx]
-                
+
                 # Create dataloader for this fold
                 fold_dataloader = create_dataloaders(
-                    fold_texts, 
-                    fold_labels,
-                    self.config,
-                    self.config.batch_size
+                    fold_texts, fold_labels, self.config, self.config.batch_size
                 )
-                
+
                 # Run evaluation on this fold
                 fold_preds = []
                 fold_probs = []
-                
+
                 self.model.eval()
                 with torch.no_grad():
                     for batch in fold_dataloader:
                         input_ids = batch["input_ids"].to(self.device)
                         attention_mask = batch["attention_mask"].to(self.device)
-                        
-                        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+
+                        outputs = self.model(
+                            input_ids=input_ids, attention_mask=attention_mask
+                        )
                         probs = torch.softmax(outputs, dim=1)
                         preds = torch.argmax(probs, dim=1)
-                        
+
                         fold_preds.extend(preds.cpu().tolist())
                         fold_probs.extend(probs.cpu().tolist())
 
                 # Calculate metrics for this fold
-                fold_metrics.append(calculate_metrics(fold_labels, fold_preds, self.metrics))
-                
+                fold_metrics.append(
+                    calculate_metrics(fold_labels, fold_preds, self.metrics)
+                )
+
                 # Store predictions
-                fold_df = pd.DataFrame({
-                    "text": fold_texts,
-                    "true_label": data.label_encoder.inverse_transform(fold_labels),
-                    "predicted_label": data.label_encoder.inverse_transform(fold_preds),
-                    "confidence": [max(probs) for probs in fold_probs],
-                    "fold": fold + 1
-                })
+                fold_df = pd.DataFrame(
+                    {
+                        "text": fold_texts,
+                        "true_label": data.label_encoder.inverse_transform(fold_labels),
+                        "predicted_label": data.label_encoder.inverse_transform(
+                            fold_preds
+                        ),
+                        "confidence": [max(probs) for probs in fold_probs],
+                        "fold": fold + 1,
+                    }
+                )
                 all_predictions.append(fold_df)
-                
+
                 # Save fold-specific results
                 if save_predictions:
                     fold_dir = output_dir / f"fold_{fold + 1}"
                     fold_dir.mkdir(exist_ok=True)
                     fold_df.to_csv(fold_dir / "predictions.csv", index=False)
-                    
+
                     # Generate fold-specific visualizations
                     self._plot_confusion_matrix(
-                        fold_df["true_label"], 
-                        fold_df["predicted_label"], 
-                        fold_dir
+                        fold_df["true_label"], fold_df["predicted_label"], fold_dir
                     )
-                    
+
                     self.analyze_errors(
                         fold_texts,
                         fold_df["true_label"],
                         fold_df["predicted_label"],
-                        fold_df["confidence"]
+                        fold_df["confidence"],
                     ).to_csv(fold_dir / "error_analysis.csv")
 
             # Aggregate results across folds
             results_df = pd.concat(all_predictions, ignore_index=True)
-            
+
             # Calculate mean and std of metrics across folds
-            mean_metrics = {metric: np.mean([fold[metric] for fold in fold_metrics]) 
-                          for metric in self.metrics}
-            std_metrics = {f"{metric}_std": np.std([fold[metric] for fold in fold_metrics]) 
-                         for metric in self.metrics}
-            
+            mean_metrics = {
+                metric: np.mean([fold[metric] for fold in fold_metrics])
+                for metric in self.metrics
+            }
+            std_metrics = {
+                f"{metric}_std": np.std([fold[metric] for fold in fold_metrics])
+                for metric in self.metrics
+            }
+
             # Combine means and stds
             final_metrics = {**mean_metrics, **std_metrics}
-            
+
             if self.config.verbosity > 0:
                 logger.info("\nCross Validation Results:")
                 for metric in self.metrics:
-                    logger.info(f"{metric}: {mean_metrics[metric]:.4f} ± {std_metrics[f'{metric}_std']:.4f}")
-            
+                    logger.info(
+                        f"{metric}: {mean_metrics[metric]:.4f} ± {std_metrics[f'{metric}_std']:.4f}"
+                    )
+
             if save_predictions:
                 # Save aggregated results
                 results_df.to_csv(output_dir / "all_predictions.csv", index=False)
-                pd.DataFrame([final_metrics]).to_csv(output_dir / "cv_metrics.csv", index=False)
+                pd.DataFrame([final_metrics]).to_csv(
+                    output_dir / "cv_metrics.csv", index=False
+                )
+
+                # Generate confusion matrix for entire dataset
+                self._plot_confusion_matrix(
+                    results_df["true_label"],
+                    results_df["predicted_label"],
+                    output_dir,  # Save in main output directory
+                )
+
+                # Generate classification report for entire dataset
+                overall_report = classification_report(
+                    results_df["true_label"],
+                    results_df["predicted_label"],
+                    output_dict=True,
+                )
+                report_df = pd.DataFrame(overall_report).T
+
+                # Plot and save overall classification report heatmap
+                self._plot_classification_report(report_df, output_dir)
+
+                # Save classification report as CSV
+                report_df.to_csv(output_dir / "classification_report.csv")
 
             return final_metrics, results_df
 
@@ -642,10 +698,7 @@ def main():
 
     # Add n_folds argument
     parser.add_argument(
-        "--n_folds",
-        type=int,
-        default=7,
-        help="Number of cross-validation folds"
+        "--n_folds", type=int, default=7, help="Number of cross-validation folds"
     )
 
     args = parser.parse_args()
