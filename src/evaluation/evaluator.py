@@ -370,8 +370,8 @@ class ModelEvaluator:
         self, report_df: pd.DataFrame, output_dir: Path
     ) -> None:
         """Generate heatmap visualization of classification report metrics."""
-        # Create figure with explicit size
-        plt.figure(figsize=(8, 6))
+        # Create figure with wider size
+        plt.figure(figsize=(10, 6))  # Changed from (8, 6) to make wider
 
         # Drop support column and last rows (avg rows) for the heatmap
         metrics_df = report_df.drop("support", axis=1).drop(
@@ -380,14 +380,14 @@ class ModelEvaluator:
 
         # Calculate appropriate left margin based on label length
         max_label_length = max(len(str(label)) for label in metrics_df.index)
-        left_margin = max(0.2, max_label_length * 0.02)  # Dynamic margin
+        left_margin = max(0.2, max_label_length * 0.015)  # Reduced multiplier from 0.02
 
-        # Adjust subplot parameters before creating the heatmap
+        # Adjust subplot parameters
         plt.subplots_adjust(
             left=left_margin,  # Dynamic left margin
-            right=0.9,  # Fixed right margin
-            top=0.90,  # Leave space for title
-            bottom=0.15,  # Leave space for xlabel
+            right=0.95,  # Increased from 0.9 to allow more width
+            top=0.90,
+            bottom=0.15,
         )
 
         # Create heatmap with adjusted layout
@@ -399,21 +399,22 @@ class ModelEvaluator:
             center=0.5,
             vmin=0,
             vmax=1,
-            square=True,
-            cbar_kws={"label": "Score", "shrink": 0.8},  # Adjust colorbar size
+            square=False,  # Changed from True to allow rectangular cells
+            cbar_kws={"label": "Score", "shrink": 0.8},
+            annot_kws={"size": 8},  # Reduced from default size
         )
 
         plt.title("Classification Report Heatmap", pad=10)
         plt.xlabel("Metrics")
         plt.ylabel("Classes")
 
-        # Rotate x-axis labels for better readability
+        # Rotate x-axis labels
         plt.xticks(rotation=45, ha="right")
 
-        # Force drawing to update layout
-        plt.draw()
+        # Adjust layout
+        plt.tight_layout()
 
-        # Save plot with tight bounding box
+        # Save plot
         plt.savefig(
             output_dir / "classification_report_heatmap.png",
             bbox_inches="tight",
