@@ -371,7 +371,7 @@ class ModelEvaluator:
     ) -> None:
         """Generate heatmap visualization of classification report metrics."""
         # Create figure with wider size
-        plt.figure(figsize=(10, 6))  # Changed from (8, 6) to make wider
+        plt.figure(figsize=(12, 6))  # Increased width for better spacing
 
         # Drop support column and last rows (avg rows) for the heatmap
         metrics_df = report_df.drop("support", axis=1).drop(
@@ -380,14 +380,11 @@ class ModelEvaluator:
 
         # Calculate appropriate left margin based on label length
         max_label_length = max(len(str(label)) for label in metrics_df.index)
-        left_margin = max(0.2, max_label_length * 0.015)  # Reduced multiplier from 0.02
+        left_margin = max(0.2, max_label_length * 0.015)
 
         # Adjust subplot parameters
         plt.subplots_adjust(
-            left=left_margin,  # Dynamic left margin
-            right=0.95,  # Increased from 0.9 to allow more width
-            top=0.90,
-            bottom=0.15,
+            left=left_margin, right=0.95, top=0.90, bottom=0.15, wspace=0.2
         )
 
         # Create heatmap with adjusted layout
@@ -399,10 +396,13 @@ class ModelEvaluator:
             center=0.5,
             vmin=0,
             vmax=1,
-            square=False,  # Changed from True to allow rectangular cells
+            square=False,
             cbar_kws={"label": "Score", "shrink": 0.8},
-            annot_kws={"size": 8},  # Reduced from default size
+            annot_kws={"size": 6, "weight": "light", "va": "center"},
         )
+
+        # Set the aspect ratio of the plot after creating the heatmap
+        ax.set_aspect(1.5)  # Make cells wider than tall
 
         plt.title("Classification Report Heatmap", pad=10)
         plt.xlabel("Metrics")
