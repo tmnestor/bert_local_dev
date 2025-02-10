@@ -197,4 +197,84 @@ src/
     ├── metrics.py
     ├── model_loading.py
     └── train_utils.py
+
+
+output_root/
+├── bert_encoder
+│   ├── 1_Pooling
+│   │   └── config.json
+│   ├── README.md
+│   ├── config.json
+│   ├── config_sentence_transformers.json
+│   ├── model.safetensors
+│   ├── modules.json
+│   ├── sentence_bert_config.json
+│   ├── special_tokens_map.json
+│   ├── tokenizer.json
+│   ├── tokenizer_config.json
+│   └── vocab.txt
+├── best_trials
+│   ├── best_model.pt
+│   └── best_model_bert_opt_exp0.pt
+├── data
+│   ├── Untitled-1.ipynb
+│   ├── bbc-text-10.csv
+│   ├── bbc-text.csv
+│   ├── label_encoder.joblib
+│   ├── test.csv
+│   ├── train.csv
+│   └── val.csv
+├── evaluation_results
+│   ├── all_predictions.csv
+│   ├── classification_report_heatmap.png
+│   ├── confidence_analysis.csv
+│   ├── confusion_matrix.csv
+│   ├── confusion_matrix.png
+│   ├── cv_metrics.csv
+│   ├── error_analysis.csv
+│   ├── error_confidence_dist.png
+│   ├── error_confusion_patterns.png
+│   ├── error_length_dist.png
+│   ├── error_metrics.csv
+│   ├── error_wordclouds.png
+│   ├── fold_1
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── fold_2
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── fold_3
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── fold_4
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── fold_5
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── fold_6
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── fold_7
+│   │   ├── confusion_matrix.png
+│   │   ├── error_analysis.csv
+│   │   └── predictions.csv
+│   ├── predictions.csv
+│   └── sklearn_classification_report.csv
+├── logs
+│   ├── evaluation_20250209_101556.log
+│   ├── evaluation_20250209_102302.log
+│   ├── evaluation_20250210_095748.log
+│   ├── prediction_20250209_101639.log
+│   ├── prediction_20250209_102235.log
+│   ├── training_20250209_100650.log
+│   └── training_20250209_101804.log
+└── predictions
+    └── predictions.csv
 ```
