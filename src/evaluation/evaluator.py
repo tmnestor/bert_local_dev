@@ -370,8 +370,7 @@ class ModelEvaluator:
         self, report_df: pd.DataFrame, output_dir: Path
     ) -> None:
         """Generate heatmap visualization of classification report metrics."""
-        # Create figure with wider size
-        plt.figure(figsize=(12, 6))  # Increased width for better spacing
+        plt.figure(figsize=(8, 6))
 
         # Drop support column and last rows (avg rows) for the heatmap
         metrics_df = report_df.drop("support", axis=1).drop(
@@ -382,10 +381,17 @@ class ModelEvaluator:
         max_label_length = max(len(str(label)) for label in metrics_df.index)
         left_margin = max(0.2, max_label_length * 0.015)
 
+        # Calculate minimum width needed for cells (4 chars: "0.00")
+        num_columns = len(metrics_df.columns)
+        min_cell_width = 0.5  # minimum width in inches per cell
+        min_figure_width = num_columns * min_cell_width + 2  # add margin space
+
+        # Use the larger of minimum width or default width
+        fig_width = max(8, min_figure_width)
+        plt.figure(figsize=(fig_width, 6))
+
         # Adjust subplot parameters
-        plt.subplots_adjust(
-            left=left_margin, right=0.95, top=0.90, bottom=0.15, wspace=0.2
-        )
+        plt.subplots_adjust(left=left_margin, right=0.95, top=0.90, bottom=0.15)
 
         # Create heatmap with adjusted layout
         ax = sns.heatmap(
@@ -398,23 +404,24 @@ class ModelEvaluator:
             vmax=1,
             square=False,
             cbar_kws={"label": "Score", "shrink": 0.8},
-            annot_kws={"size": 6, "weight": "light", "va": "center"},
+            annot_kws={
+                "size": 6,
+                "weight": "light",
+                "va": "center",
+                "ha": "center",  # Center horizontally
+            },
         )
 
-        # Set the aspect ratio of the plot after creating the heatmap
-        ax.set_aspect(1.5)  # Make cells wider than tall
+        # Set fixed cell width based on figure size
+        ax.set_aspect(
+            fig_width / (6 * num_columns)
+        )  # Scale aspect ratio to maintain minimum width
 
         plt.title("Classification Report Heatmap", pad=10)
         plt.xlabel("Metrics")
         plt.ylabel("Classes")
-
-        # Rotate x-axis labels
         plt.xticks(rotation=45, ha="right")
-
-        # Adjust layout
         plt.tight_layout()
-
-        # Save plot
         plt.savefig(
             output_dir / "classification_report_heatmap.png",
             bbox_inches="tight",
