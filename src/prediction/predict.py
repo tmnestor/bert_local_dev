@@ -29,6 +29,21 @@ from ..utils.logging_manager import get_logger, setup_logging
 logger = get_logger(__name__)
 
 
+def save_minimal_predictions(df: pd.DataFrame, output_path: Path) -> None:
+    """Save predictions with only required columns and specific names."""
+    minimal_df = pd.DataFrame(
+        {
+            "Hash_Id": df["Hash_Id"],
+            "Cleaned_Claim": df["text"],
+            "FTC_Label": df["predicted_label"],
+        }
+    )
+
+    logger.info("Saving minimal predictions with columns: %s", list(minimal_df.columns))
+    minimal_df.to_csv(output_path, index=False)
+    logger.info("Saved to: %s", output_path)
+
+
 class Predictor(ModelEvaluator):
     """Handles model prediction without evaluation."""
 
@@ -81,8 +96,7 @@ class Predictor(ModelEvaluator):
 
             if save_predictions:
                 output_path = self.config.output_dir / output_file
-                df.to_csv(output_path, index=False)
-                logger.info("Saved predictions to: %s", output_path)
+                save_minimal_predictions(df, output_path)
 
             return df
 

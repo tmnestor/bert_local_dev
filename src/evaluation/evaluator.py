@@ -146,10 +146,50 @@ class ModelEvaluator:
     def _load_model(self) -> None:
         """Load trained model from checkpoint."""
         try:
-            checkpoint = torch.load(
-                self.config.best_model, map_location=self.config.device
-            )
+            checkpoint = torch.load(self.config.best_model, map_location=self.config.device)
+            
+            logger.info("\nTraining Configuration:")
+            logger.info("-" * 50)
 
+            # Try multiple locations for optimizer info
+            optimizer_info = None
+            for key in ['hyperparameters', 'config', 'optimizer_config']:
+                if key in checkpoint and isinstance(checkpoint[key], dict):
+                    cfg = checkpoint[key]
+                    if 'optimizer' in cfg or 'type' in cfg:
+                        optimizer_info = cfg
+                        logger.info(f"Found optimizer info in {key}")
+                        break
+
+            # Also check optimizer state dict
+            if not optimizer_info and 'optimizer_state_dict' in checkpoint:
+                optimizer_info = {
+                    'type': checkpoint['optimizer_state_dict']['name'] 
+                           if 'name' in checkpoint['optimizer_state_dict'] 
+                           else checkpoint['optimizer_state_dict']['param_groups'][0].get('name', 'Unknown'),
+                    'lr': checkpoint['optimizer_state_dict']['param_groups'][0]['lr'],
+                    'weight_decay': checkpoint['optimizer_state_dict']['param_groups'][0].get('weight_decay', 0.0)
+                }
+
+            if optimizer_info:
+                logger.info("Optimizer Configuration:")
+                logger.info(f"  Type: {optimizer_info.get('type', optimizer_info.get('optimizer', 'Unknown'))}")
+                logger.info(f"  Learning rate: {optimizer_info.get('lr', 0.0):.6f}")
+                logger.info(f"  Weight decay: {optimizer_info.get('weight_decay', 0.0):.6f}")
+                
+                # Add optimizer-specific parameters
+                if 'betas' in optimizer_info:
+                    logger.info(f"  Betas: {optimizer_info['betas']}")
+                if 'momentum' in optimizer_info:
+                    logger.info(f"  Momentum: {optimizer_info['momentum']:.3f}")
+                if 'eps' in optimizer_info:
+                    logger.info(f"  Epsilon: {optimizer_info['eps']:.8f}")
+            else:
+                logger.warning("No optimizer configuration found in checkpoint")
+
+            logger.info("-" * 50)
+
+            # Continue with existing model loading code
             # More flexible state dict loading
             state_dict = None
             for key in ["model_state", "model_state_dict", "state_dict"]:
@@ -201,6 +241,25 @@ class ModelEvaluator:
             current_state = self.model.state_dict()
             current_shapes = {k: v.shape for k, v in current_state.items()}
             checkpoint_shapes = {k: v.shape for k, v in state_dict.items()}
+
+            # After loading state_dict but before returning model
+            # Log model architecture and training config details
+            logger.info("\nModel Configuration:")
+            logger.info("-" * 50)
+            
+            # Log optimizer details if available
+            if "optimizer_state" in checkpoint:
+                opt_state = checkpoint["optimizer_state"]
+                logger.info("Optimizer: %s", opt_state["name"] if "name" in opt_state else "Unknown")
+                logger.info("Learning rate: %.6f", opt_state["param_groups"][0]["lr"])
+                
+                # Log optimizer-specific parameters
+                if "betas" in opt_state["param_groups"][0]:  # Adam/AdamW
+                    logger.info("Betas: (%.3f, %.3f)", *opt_state["param_groups"][0]["betas"])
+                if "momentum" in opt_state["param_groups"][0]:  # SGD
+                    logger.info("Momentum: %.3f", opt_state["param_groups"][0]["momentum"])
+                if "weight_decay" in opt_state["param_groups"][0]:
+                    logger.info("Weight decay: %.6f", opt_state["param_groups"][0]["weight_decay"])
 
             if current_shapes != checkpoint_shapes:
                 logger.error("Model architecture mismatch:")
