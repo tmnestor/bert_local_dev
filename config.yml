@@ -17,7 +17,7 @@ paths:
 data:
   files:
     # Use the correct data_root anchor for all files
-    default: !join [*output_root, /, *data_dir, /, bbc-text.csv]
+    default: !join [*output_root, /, *data_dir, /, bbc-text-with-ids.csv]
     train: !join [*output_root, /, *data_dir, /, train.csv]
     val: !join [*output_root, /, *data_dir, /, val.csv]
     test: !join [*output_root, /, *data_dir, /, test.csv]
