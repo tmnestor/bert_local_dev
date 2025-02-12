@@ -74,3 +74,4 @@ env/
 bert_encoder/
 test_configuration.py
 print_config.py
+tests/test_predict.py

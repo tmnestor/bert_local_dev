@@ -146,43 +146,53 @@ class ModelEvaluator:
     def _load_model(self) -> None:
         """Load trained model from checkpoint."""
         try:
-            checkpoint = torch.load(self.config.best_model, map_location=self.config.device)
-            
+            checkpoint = torch.load(
+                self.config.best_model, map_location=self.config.device
+            )
+
             logger.info("\nTraining Configuration:")
             logger.info("-" * 50)
 
             # Try multiple locations for optimizer info
             optimizer_info = None
-            for key in ['hyperparameters', 'config', 'optimizer_config']:
+            for key in ["hyperparameters", "config", "optimizer_config"]:
                 if key in checkpoint and isinstance(checkpoint[key], dict):
                     cfg = checkpoint[key]
-                    if 'optimizer' in cfg or 'type' in cfg:
+                    if "optimizer" in cfg or "type" in cfg:
                         optimizer_info = cfg
                         logger.info(f"Found optimizer info in {key}")
                         break
 
             # Also check optimizer state dict
-            if not optimizer_info and 'optimizer_state_dict' in checkpoint:
+            if not optimizer_info and "optimizer_state_dict" in checkpoint:
                 optimizer_info = {
-                    'type': checkpoint['optimizer_state_dict']['name'] 
-                           if 'name' in checkpoint['optimizer_state_dict'] 
-                           else checkpoint['optimizer_state_dict']['param_groups'][0].get('name', 'Unknown'),
-                    'lr': checkpoint['optimizer_state_dict']['param_groups'][0]['lr'],
-                    'weight_decay': checkpoint['optimizer_state_dict']['param_groups'][0].get('weight_decay', 0.0)
+                    "type": checkpoint["optimizer_state_dict"]["name"]
+                    if "name" in checkpoint["optimizer_state_dict"]
+                    else checkpoint["optimizer_state_dict"]["param_groups"][0].get(
+                        "name", "Unknown"
+                    ),
+                    "lr": checkpoint["optimizer_state_dict"]["param_groups"][0]["lr"],
+                    "weight_decay": checkpoint["optimizer_state_dict"]["param_groups"][
+                        0
+                    ].get("weight_decay", 0.0),
                 }
 
             if optimizer_info:
                 logger.info("Optimizer Configuration:")
-                logger.info(f"  Type: {optimizer_info.get('type', optimizer_info.get('optimizer', 'Unknown'))}")
+                logger.info(
+                    f"  Type: {optimizer_info.get('type', optimizer_info.get('optimizer', 'Unknown'))}"
+                )
                 logger.info(f"  Learning rate: {optimizer_info.get('lr', 0.0):.6f}")
-                logger.info(f"  Weight decay: {optimizer_info.get('weight_decay', 0.0):.6f}")
-                
+                logger.info(
+                    f"  Weight decay: {optimizer_info.get('weight_decay', 0.0):.6f}"
+                )
+
                 # Add optimizer-specific parameters
-                if 'betas' in optimizer_info:
+                if "betas" in optimizer_info:
                     logger.info(f"  Betas: {optimizer_info['betas']}")
-                if 'momentum' in optimizer_info:
+                if "momentum" in optimizer_info:
                     logger.info(f"  Momentum: {optimizer_info['momentum']:.3f}")
-                if 'eps' in optimizer_info:
+                if "eps" in optimizer_info:
                     logger.info(f"  Epsilon: {optimizer_info['eps']:.8f}")
             else:
                 logger.warning("No optimizer configuration found in checkpoint")
@@ -246,20 +256,30 @@ class ModelEvaluator:
             # Log model architecture and training config details
             logger.info("\nModel Configuration:")
             logger.info("-" * 50)
-            
+
             # Log optimizer details if available
             if "optimizer_state" in checkpoint:
                 opt_state = checkpoint["optimizer_state"]
-                logger.info("Optimizer: %s", opt_state["name"] if "name" in opt_state else "Unknown")
+                logger.info(
+                    "Optimizer: %s",
+                    opt_state["name"] if "name" in opt_state else "Unknown",
+                )
                 logger.info("Learning rate: %.6f", opt_state["param_groups"][0]["lr"])
-                
+
                 # Log optimizer-specific parameters
                 if "betas" in opt_state["param_groups"][0]:  # Adam/AdamW
-                    logger.info("Betas: (%.3f, %.3f)", *opt_state["param_groups"][0]["betas"])
+                    logger.info(
+                        "Betas: (%.3f, %.3f)", *opt_state["param_groups"][0]["betas"]
+                    )
                 if "momentum" in opt_state["param_groups"][0]:  # SGD
-                    logger.info("Momentum: %.3f", opt_state["param_groups"][0]["momentum"])
+                    logger.info(
+                        "Momentum: %.3f", opt_state["param_groups"][0]["momentum"]
+                    )
                 if "weight_decay" in opt_state["param_groups"][0]:
-                    logger.info("Weight decay: %.6f", opt_state["param_groups"][0]["weight_decay"])
+                    logger.info(
+                        "Weight decay: %.6f",
+                        opt_state["param_groups"][0]["weight_decay"],
+                    )
 
             if current_shapes != checkpoint_shapes:
                 logger.error("Model architecture mismatch:")
@@ -739,36 +759,43 @@ class ModelEvaluator:
         )
 
 
-def main():
-    """Command-line interface entry point for model evaluation."""
+def parse_eval_args() -> argparse.Namespace:
+    """Parse command-line arguments for model evaluation.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments
+    """
     parser = argparse.ArgumentParser(description="Evaluate trained BERT classifier")
 
     parser.add_argument(
         "--output_root",
         type=Path,
-        default=Path(CONFIG["output_root"]),  # Now CONFIG is defined
+        default=Path(CONFIG["output_root"]),
         help="Root directory for all operations",
     )
     parser.add_argument(
         "--best_model",
-        type=str,  # Changed from Path to str
+        type=str,
         required=True,
         help="Model filename (relative to best_trials_dir)",
     )
     parser.add_argument(
         "--verbosity",
         type=int,
-        default=CONFIG.get("logging", {}).get("verbosity", 1),  # Get from CONFIG
+        default=CONFIG.get("logging", {}).get("verbosity", 1),
         choices=[0, 1, 2],
         help="Verbosity level",
     )
-
-    # Add n_folds argument
     parser.add_argument(
         "--n_folds", type=int, default=7, help="Number of cross-validation folds"
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main():
+    """Command-line interface entry point for model evaluation."""
+    args = parse_eval_args()
     config = EvaluationConfig.from_args(args)
     setup_logging(config)
 
@@ -786,14 +813,12 @@ def main():
     evaluator = ModelEvaluator.from_config(config)
     metrics, _ = evaluator.evaluate(save_predictions=True)
 
-    if config.verbosity > 0:  # Add this check
+    if config.verbosity > 0:
         print("\nEvaluation Results:")
         print("-" * 30)
         for metric, value in metrics.items():
             print(f"{metric.capitalize()}: {value:.4f}")
 
-
-# ...existing code...
 
 if __name__ == "__main__":
     main()
