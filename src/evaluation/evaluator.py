@@ -44,12 +44,11 @@ import torch
 import torch.jit
 from sklearn.metrics import (
     accuracy_score,
-    f1_score,
     classification_report,
+    f1_score,
 )  # Add back classification_report
-from tqdm.auto import tqdm
-from wordcloud import WordCloud
 from sklearn.model_selection import KFold
+from wordcloud import WordCloud
 
 from src.config.configuration import CONFIG, EvaluationConfig, ModelConfig
 from src.data_utils import create_dataloaders, load_and_preprocess_data
@@ -160,7 +159,7 @@ class ModelEvaluator:
                     cfg = checkpoint[key]
                     if "optimizer" in cfg or "type" in cfg:
                         optimizer_info = cfg
-                        logger.info(f"Found optimizer info in {key}")
+                        logger.info("Found optimizer info in %s", key)
                         break
 
             # Also check optimizer state dict
@@ -180,20 +179,21 @@ class ModelEvaluator:
             if optimizer_info:
                 logger.info("Optimizer Configuration:")
                 logger.info(
-                    f"  Type: {optimizer_info.get('type', optimizer_info.get('optimizer', 'Unknown'))}"
+                    "  Type: %s",
+                    optimizer_info.get('type', optimizer_info.get('optimizer', 'Unknown'))
                 )
-                logger.info(f"  Learning rate: {optimizer_info.get('lr', 0.0):.6f}")
+                logger.info("  Learning rate: %.6f", optimizer_info.get('lr', 0.0))
                 logger.info(
-                    f"  Weight decay: {optimizer_info.get('weight_decay', 0.0):.6f}"
+                    "  Weight decay: %.6f", optimizer_info.get('weight_decay', 0.0)
                 )
 
                 # Add optimizer-specific parameters
                 if "betas" in optimizer_info:
-                    logger.info(f"  Betas: {optimizer_info['betas']}")
+                    logger.info("  Betas: %s", optimizer_info['betas'])
                 if "momentum" in optimizer_info:
-                    logger.info(f"  Momentum: {optimizer_info['momentum']:.3f}")
+                    logger.info("  Momentum: %.3f", optimizer_info['momentum'])
                 if "eps" in optimizer_info:
-                    logger.info(f"  Epsilon: {optimizer_info['eps']:.8f}")
+                    logger.info("  Epsilon: %.8f", optimizer_info['eps'])
             else:
                 logger.warning("No optimizer configuration found in checkpoint")
 
@@ -597,8 +597,8 @@ class ModelEvaluator:
             all_predictions = []
 
             # Run k-fold cross validation
-            for fold, (train_idx, val_idx) in enumerate(kf.split(data.test_texts)):
-                logger.info(f"\nEvaluating fold {fold + 1}/{self.config.n_folds}")
+            for fold, (_, val_idx) in enumerate(kf.split(data.test_texts)):
+                logger.info("\nEvaluating fold %d/%d", fold + 1, self.config.n_folds)
 
                 # Split data for this fold
                 fold_texts = [data.test_texts[i] for i in val_idx]
@@ -685,7 +685,10 @@ class ModelEvaluator:
                 logger.info("\nCross Validation Results:")
                 for metric in self.metrics:
                     logger.info(
-                        f"{metric}: {mean_metrics[metric]:.4f} ± {std_metrics[f'{metric}_std']:.4f}"
+                        "%s: %.4f ± %.4f",
+                        metric,
+                        mean_metrics[metric],
+                        std_metrics[f"{metric}_std"],
                     )
 
             if save_predictions:
