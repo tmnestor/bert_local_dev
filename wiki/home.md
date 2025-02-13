@@ -1,7 +1,7 @@
-# The Free Text Categoriser Framework Wiki
+# BERT Text Classification Framework
 
 ## Purpose
-A framework for training, tuning and deploying a BERT-based text classifier with:
+A production-ready framework for training and deploying BERT-based text classifiers with:
 - Automated hyperparameter optimization
 - Cross-validation evaluation
 - Detailed performance analysis
@@ -9,15 +9,10 @@ A framework for training, tuning and deploying a BERT-based text classifier with
 - Batch prediction capabilities
 
 ## Core Features
-- **Automated Optimization**: Bayesian and Population Based optimization for hyperparameter tuning
+- **Robust Training**: Multi-GPU support, gradient accumulation, mixed precision
+- **Automated Optimization**: Bayesian optimization for hyperparameter tuning
 - **Comprehensive Evaluation**: Cross-validation, confusion matrices, error analysis
-
-## Quick Navigation
-- [Configuration Guide](configuration.md)
-- [CLI Reference] ()
-- [Training Guide](training.md)
-- [Hyperparameter Optimization](optimization.md)
-- [Model Evaluation](evaluation.md)
+- **Production Ready**: Model versioning, checkpoint management, inference API
 
 ## Quick Start
 ```bash
@@ -33,3 +28,5 @@ python -m src.evaluate --best_model best_model_v1.pt --test_data data/test.csv
 # Run predictions
 python -m src.predict --model_path models/best_model.pt --input_file data/predict.csv
 ```
+
+See [[CLI Reference]] for complete usage details.
