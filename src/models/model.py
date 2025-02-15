@@ -35,6 +35,7 @@ Note:
 """
 
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -59,26 +60,32 @@ class BERTClassifier(nn.Module):
         super().__init__()
         self._validate_config(classifier_config)
         self.classifier_config = classifier_config
-
-        # Get BERT hidden size from config
         self.bert_hidden_size = classifier_config.get("bert_hidden_size", 384)
 
-        if bert_encoder_path:  # Training mode
+        if bert_encoder_path:  # Training mode - loading from local path only
+            if not Path(bert_encoder_path).exists():
+                raise ValueError(f"BERT encoder not found at: {bert_encoder_path}")
             logger.info(
-                "Training Mode: Loading BERT encoder from %s", bert_encoder_path
+                "Training Mode: Loading local BERT encoder from %s", bert_encoder_path
             )
-            self.bert = AutoModel.from_pretrained(bert_encoder_path)
-            self.bert_hidden_size = self.bert.config.hidden_size
-        else:  # Inference mode - Initialize with default model
-            logger.info(
-                "Inference Mode: Initializing BERT (will be overwritten by checkpoint)"
-            )
+            try:
+                self.bert = AutoModel.from_pretrained(
+                    bert_encoder_path, local_files_only=True
+                )
+                self.bert_hidden_size = self.bert.config.hidden_size
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load local BERT encoder: {str(e)}"
+                ) from e
+        else:  # Inference mode - create empty model to match state dict
+            logger.info("Inference Mode: Creating empty BERT model to load checkpoint")
+            # Create empty model with same architecture as training
             self.bert = AutoModel.from_pretrained(
-                "sentence-transformers/all-MiniLM-L6-v2"
+                "sentence-transformers/all-MiniLM-L6-v2", local_files_only=True
             )
             self.bert_hidden_size = self.bert.config.hidden_size
 
-        # Build classifier layers with confirmed bert_hidden_size
+        # Build classifier layers
         self.classifier = self._build_classifier(self.bert_hidden_size, num_classes)
 
         # Add model architecture logging
@@ -100,27 +107,30 @@ class BERTClassifier(nn.Module):
         cls, checkpoint: Dict, num_classes: int, device: str = "cpu"
     ) -> "BERTClassifier":
         """Create model instance from checkpoint."""
+        logger.debug("Loading model from checkpoint...")
+
         config = checkpoint.get("config", {})
         if not config:
             raise ValueError("No configuration found in checkpoint")
 
-        # Create model in inference mode (bert_encoder_path=None)
+        # Create model with empty BERT that matches architecture
+        logger.debug("Creating model structure...")
         model = cls(
             bert_encoder_path=None, num_classes=num_classes, classifier_config=config
         )
 
-        # Load full state dict
+        logger.debug("Loading state dict from checkpoint...")
+        if "model_state_dict" not in checkpoint:
+            raise ValueError("No model state dict found in checkpoint")
+
         try:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        except RuntimeError as e:
-            raise RuntimeError(
-                f"Failed to load model state: {str(e)}. "
-                "This might be due to incompatible model architectures."
-            ) from e
+            model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+            logger.info("Successfully loaded model state from checkpoint")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model state: {str(e)}") from e
 
         model.to(device)
         model.eval()
-
         return model
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
