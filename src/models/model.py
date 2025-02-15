@@ -60,23 +60,19 @@ class BERTClassifier(nn.Module):
         self._validate_config(classifier_config)
         self.classifier_config = classifier_config
 
-        # Get BERT hidden size from config or default
-        self.bert_hidden_size = classifier_config.get(
-            "bert_hidden_size",
-            384,  # Default size for all-MiniLM-L6-v2
-        )
+        # Get BERT hidden size from config
+        self.bert_hidden_size = classifier_config.get("bert_hidden_size", 384)
 
         if bert_encoder_path:  # Training mode
             logger.info(
                 "Training Mode: Loading BERT encoder from %s", bert_encoder_path
             )
             self.bert = AutoModel.from_pretrained(bert_encoder_path)
-            # Update hidden size from loaded model
             self.bert_hidden_size = self.bert.config.hidden_size
-            for param in self.bert.parameters():
-                param.requires_grad = False
-        else:  # Inference mode
-            logger.info("Inference Mode: BERT will be loaded from checkpoint")
+        else:  # Inference mode - Initialize with default model
+            logger.info(
+                "Inference Mode: Initializing BERT (will be overwritten by checkpoint)"
+            )
             self.bert = AutoModel.from_pretrained(
                 "sentence-transformers/all-MiniLM-L6-v2"
             )
@@ -104,7 +100,7 @@ class BERTClassifier(nn.Module):
         cls, checkpoint: Dict, num_classes: int, device: str = "cpu"
     ) -> "BERTClassifier":
         """Create model instance from checkpoint."""
-        config = checkpoint.get("config")
+        config = checkpoint.get("config", {})
         if not config:
             raise ValueError("No configuration found in checkpoint")
 
@@ -113,10 +109,18 @@ class BERTClassifier(nn.Module):
             bert_encoder_path=None, num_classes=num_classes, classifier_config=config
         )
 
-        # Load state dict
-        model.load_state_dict(checkpoint["model_state_dict"])
+        # Load full state dict
+        try:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Failed to load model state: {str(e)}. "
+                "This might be due to incompatible model architectures."
+            ) from e
+
         model.to(device)
         model.eval()
+
         return model
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
@@ -194,6 +198,11 @@ class BERTClassifier(nn.Module):
     ) -> torch.Tensor:
         """Forward pass of the model."""
         try:
+            if self.bert is None:
+                raise RuntimeError(
+                    "BERT model not initialized. Load from checkpoint first."
+                )
+
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
             # Use mean pooling
             embeddings = self._mean_pooling(outputs, attention_mask)
