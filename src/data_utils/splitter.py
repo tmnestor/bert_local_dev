@@ -1,26 +1,6 @@
-"""Dataset splitting utilities for text classification tasks.
+"""Dataset splitting utilities for text classification tasks."""
 
-This module handles the creation and management of dataset splits, providing:
-- Consistent train/validation/test splits with stratification
-- Persistent storage of splits for reproducibility
-- Automatic label encoding
-- Split size verification and logging
-
-The module ensures consistent data handling across training, validation,
-and testing phases while maintaining proper stratification of labels.
-
-Typical usage:
-    ```python
-    splitter = DataSplitter(data_dir)
-    splits = splitter.load_splits(dataframe)
-    train_texts, train_labels = splits.train_texts, splits.train_labels
-    ```
-
-Note:
-    This module expects input data to have 'text' and 'category' columns,
-    where 'category' contains the class labels.
-"""
-
+import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
@@ -56,11 +36,23 @@ class DataSplit:
     test_labels: Optional[List[str]] = None
     test_ids: Optional[List[str]] = None  # Add IDs field
     label_encoder: Optional[LabelEncoder] = None
-    num_classes: Optional[int] = None
+    # Remove num_classes as it should only come from config.yml
 
-    def __post_init__(self):
-        if self.label_encoder and not self.num_classes:
-            self.num_classes = len(self.label_encoder.classes_)
+    # Remove __post_init__ since we don't need to calculate num_classes here
+
+
+def log_split_info(
+    splits: Tuple[List[str], List[str], List[str]], logger: logging.Logger
+) -> None:
+    """Log split size information."""
+    total = sum(len(split) for split in splits)
+    train_size, val_size, test_size = [len(split) for split in splits]
+
+    logger.info("\nData Split Information:")
+    logger.info("Total samples: %d", total)
+    logger.info("Training: %d (%.1f%%)", train_size, 100 * train_size / total)
+    logger.info("Validation: %d (%.1f%%)", val_size, 100 * val_size / total)
+    logger.info("Test: %d (%.1f%%)", test_size, 100 * test_size / total)
 
 
 class DataSplitter:
@@ -212,19 +204,8 @@ class DataSplitter:
                 )
                 val_df.to_csv(self.data_dir / "val.csv", index=False)
 
-        # Log split sizes
-        total = len(texts)
-        logger.debug("\nSplit sizes:")
-        logger.debug("  Total: %d", total)
-        logger.debug(
-            "  Train: %d (%.1f%%)", len(train_texts), 100 * len(train_texts) / total
-        )
-        logger.debug(
-            "  Val:   %d (%.1f%%)", len(val_texts), 100 * len(val_texts) / total
-        )
-        logger.debug(
-            "  Test:  %d (%.1f%%)", len(test_texts), 100 * len(test_texts) / total
-        )
+        # Log split information in one place
+        log_split_info((train_texts, val_texts, test_texts), logger)
 
         return DataSplit(
             train_texts=train_texts,

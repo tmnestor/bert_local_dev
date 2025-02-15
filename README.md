@@ -63,8 +63,8 @@ python -m src.training.train \
 ### Hyperparameter Optimization
 ```bash
 python -m src.tuning.optimize \
-  --output_root "/Users/tod/BERT_TRAINING" \
-  --study_name "bert_opt" \
+  --output_root /Users/tod/BERT_TRAINING \
+  --study_name bert_opt \
   --n_trials 10 \
   --max_seq_len 64 \
   --verbosity 2
@@ -72,17 +72,24 @@ python -m src.tuning.optimize \
 ### Model Evaluation
 ```bash
 python -m src.evaluation.evaluator \
-    --output_root "/Users/tod/BERT_TRAINING" \
-    --best_model "best_model.pt"
+    --output_root /Users/tod/BERT_TRAINING \
+    --best_model best_model.pt
 ```
 
 ### Model Prediction
 ```bash
 python -m src.prediction.predict \
-    --output_root "/Users/tod/BERT_TRAINING" \
+    --output_root /Users/tod/BERT_TRAINING \
     --best_model best_model.pt \
     --data_file test.csv \
     --output_file predictions.csv
+```
+
+#### Model Inspection
+```bash
+python -m src.utils.model_info \
+    --output_root "/Users/tod/BERT_TRAINING" \
+    --model best_model_bert_opt.pt
 ```
 
 ### Configuration Override Precedence

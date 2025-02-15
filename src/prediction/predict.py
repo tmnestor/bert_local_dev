@@ -21,12 +21,144 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
-from ..config.configuration import PredictionConfig
+from ..config.configuration import BaseConfig, load_yaml_config
 from ..data_utils import create_dataloaders, load_and_preprocess_data
 from ..evaluation.evaluator import ModelEvaluator, suppress_evaluation_warnings
 from ..utils.logging_manager import get_logger, setup_logging
+from ..utils.model_info import display_model_info  # Add import
+from dataclasses import dataclass, field
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class PredictionConfig(BaseConfig):
+    """Configuration specific to prediction tasks."""
+
+    output_root: Path = field(default=None)
+    data_file: Path = field(default=None)
+    best_model: Path = field(default=None)
+    output_file: str = field(default="predictions.csv")
+    batch_size: int = field(default=32)
+    device: str = field(default="cpu")
+    verbosity: int = field(default=1)
+    num_classes: int = field(default=None)  # Add num_classes field
+    max_seq_len: int = field(init=False)  # Add this field
+
+    # Non-init fields
+    output_dir: Path = field(init=False)
+    best_trials_dir: Path = field(init=False)
+    logs_dir: Path = field(init=False)
+    data_dir: Path = field(init=False)  # Add data_dir
+
+    def __post_init__(self):
+        """Initialize after creation."""
+        # Load defaults from config.yml
+        config = load_yaml_config()
+
+        # Convert string paths to Path objects
+        if isinstance(self.output_root, str):
+            self.output_root = Path(self.output_root)
+        if isinstance(self.data_file, str):
+            self.data_file = Path(self.data_file)
+        if isinstance(self.best_model, str):
+            self.best_model = Path(self.best_model)
+
+        # Set defaults from config if not provided
+        if self.output_root is None:
+            self.output_root = Path(config["output_root"])
+        if self.data_file is None:
+            self.data_file = Path(config["data"]["files"]["predict"])
+        if self.batch_size is None:
+            self.batch_size = config["model"]["batch_size"]
+        if self.device is None:
+            self.device = config["model"]["device"]
+
+        # Set model-specific defaults from config.yml
+        if self.num_classes is None:
+            self.num_classes = config["classifier"]["num_classes"]
+            if self.num_classes is None:
+                raise ValueError("num_classes must be set in config.yml")
+
+        # Set max_seq_len from config.yml
+        self.max_seq_len = config["model"]["max_seq_len"]
+
+        # Setup all required directories
+        self.output_dir = self.output_root / "predictions"
+        self.best_trials_dir = self.output_root / "best_trials"
+        self.logs_dir = self.output_root / "logs"
+        self.data_dir = self.output_root / "data"  # Initialize data_dir
+
+        # Create all directories
+        for dir_path in [
+            self.output_dir,
+            self.best_trials_dir,
+            self.logs_dir,
+            self.data_dir,
+        ]:
+            dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Resolve paths relative to output_root
+        if not self.data_file.is_absolute():
+            self.data_file = self.output_root / "data" / self.data_file
+        if not self.best_model.is_absolute():
+            self.best_model = self.best_trials_dir / self.best_model
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "PredictionConfig":
+        """Create config from argparse namespace."""
+        # Extract arguments into a dictionary
+        config_dict = {}
+        for arg in [
+            "data_file",
+            "best_model",
+            "output_file",
+            "batch_size",
+            "device",
+            "verbosity",
+            "output_root",
+        ]:
+            if hasattr(args, arg):
+                config_dict[arg] = getattr(args, arg)
+
+        return cls(**config_dict)
+
+    @classmethod
+    def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Add prediction-specific arguments to parser."""
+        parser.add_argument(
+            "--output_root",
+            type=str,
+            required=True,
+            help="Root directory for all operations",
+        )
+        parser.add_argument(
+            "--data_file",
+            type=str,
+            help="Path to input data file for predictions (default from config.yml)",
+        )
+        parser.add_argument(
+            "--best_model",
+            type=str,
+            required=True,
+            help="Path to trained model checkpoint",
+        )
+        parser.add_argument(
+            "--output_file",
+            type=str,
+            default="predictions.csv",
+            help="Output file name for predictions",
+        )
+        parser.add_argument(
+            "--batch_size",
+            type=int,
+            help="Batch size for prediction (default from config.yml)",
+        )
+        parser.add_argument(
+            "--num_classes",
+            type=int,
+            help="Number of output classes (default from config.yml)",
+        )
 
 
 def save_minimal_predictions(df: pd.DataFrame, output_path: Path) -> None:
@@ -116,24 +248,19 @@ def main():
     PredictionConfig.add_argparse_args(parser)
     args = parser.parse_args()
 
-    # Initialize config
+    # Initialize config with defaults from config.yml
     config = PredictionConfig.from_args(args)
     setup_logging(config)
 
-    # Resolve paths
-    if not Path(config.bert_model_name).is_absolute():
-        config.bert_model_name = str(config.output_root / "bert_encoder")
-
-    # Resolve best_model path
-    config.best_model = config.best_trials_dir / args.best_model
-
-    logger.info("Using BERT encoder from: %s", config.bert_model_name)
     logger.info("Loading model from: %s", config.best_model)
+
+    logger.info("Using input data from: %s", config.data_file)
+    logger.info("Saving predictions to: %s", config.output_dir / config.output_file)
 
     # Create predictor and generate predictions
     predictor = Predictor.from_config(config)
     predictions_df = predictor.predict(
-        save_predictions=True, output_file=args.output_file
+        save_predictions=True, output_file=config.output_file
     )
 
     if config.verbosity > 0:

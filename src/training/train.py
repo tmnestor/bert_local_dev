@@ -21,7 +21,7 @@ Typical usage:
 Attributes:
     CONFIG (Dict): Default configuration loaded from config.yml
     CLASSIFIER_DEFAULTS (Dict): Default classifier architecture settings
-    
+
 Note:
     This module expects a BERT encoder to be available at the specified path
     and a properly formatted dataset with 'text' and 'category' columns.
@@ -39,6 +39,7 @@ from ..config.configuration import (
     ModelConfig,
     CONFIG,
     CLASSIFIER_DEFAULTS,
+    load_yaml_config,  # Add this import
 )
 from ..models.model import BERTClassifier
 from .trainer import Trainer
@@ -46,6 +47,7 @@ from ..data_utils import load_and_preprocess_data, create_dataloaders
 from ..utils.train_utils import initialize_progress_bars
 from ..utils.logging_manager import get_logger, setup_logging
 from ..tuning.optimize import create_optimizer
+from ..utils.model_loading import save_checkpoint  # Add this import
 
 logger = get_logger(__name__)  # Change to get_logger
 
@@ -138,64 +140,79 @@ def load_best_configuration(
     return None
 
 
+def save_best_model(
+    model: BERTClassifier, config: ModelConfig, score: float, path: Path
+) -> None:
+    """Save best model checkpoint."""
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "config": {
+            "bert_hidden_size": CLASSIFIER_DEFAULTS["bert_hidden_size"],
+            "hidden_dims": CLASSIFIER_DEFAULTS["hidden_dims"],
+            "dropout_rate": CLASSIFIER_DEFAULTS["dropout_rate"],
+            "activation": CLASSIFIER_DEFAULTS["activation"],
+        },
+        "num_classes": config.num_classes,
+        "metric_value": score,
+        "hyperparameters": {
+            "optimizer": CONFIG["optimizer"]["optimizer_choice"],
+            "lr": CONFIG["optimizer"]["lr"],
+            "weight_decay": CONFIG["optimizer"]["weight_decay"],
+        },
+    }
+
+    try:
+        # Use imported save_checkpoint function
+        save_checkpoint(
+            path=path,
+            model_state=checkpoint["model_state_dict"],
+            config=checkpoint["config"],
+            num_classes=checkpoint["num_classes"],
+            metric_value=checkpoint["metric_value"],
+            hyperparameters=checkpoint["hyperparameters"],
+        )
+        logger.info("Saved best model to: %s", path)
+    except Exception as e:
+        logger.error("Failed to save model: %s", str(e))
+        raise
+
+
 def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
-    """Trains a BERT classifier model with given configuration.
-
-    This function handles the complete training process including:
-    - Data loading and preprocessing
-    - Model initialization
-    - Optimizer and scheduler setup
-    - Training loop with validation
-    - Model checkpointing
-    - Progress tracking and logging
-
-    Args:
-        model_config (ModelConfig): Configuration for model training parameters.
-        clf_config (dict, optional): Classifier-specific configuration. If None,
-            uses defaults from config.yml.
-
-    Raises:
-        ValueError: If configuration validation fails.
-        RuntimeError: If training encounters an error.
-    """
+    """Trains a BERT classifier model with given configuration."""
     if clf_config is None:
-        # Use default configuration from config.yml
         clf_config = {
             "hidden_dim": CLASSIFIER_DEFAULTS["hidden_dims"],
             "activation": CLASSIFIER_DEFAULTS["activation"],
             "dropout_rate": CLASSIFIER_DEFAULTS["dropout_rate"],
+            "bert_hidden_size": CLASSIFIER_DEFAULTS["bert_hidden_size"],
             "optimizer": CONFIG["optimizer"]["optimizer_choice"],
             "lr": CONFIG["optimizer"]["lr"],
             "weight_decay": CONFIG["optimizer"]["weight_decay"],
             "warmup_ratio": CONFIG["optimizer"]["warmup_ratio"],
         }
 
-    # Ensure bert_model_name is absolute
-    if not Path(model_config.bert_model_name).is_absolute():
-        model_config.bert_model_name = str(model_config.output_root / "bert_encoder")
-
-    logger.info("Using BERT encoder from: %s", model_config.bert_model_name)
-
     # Single optimizer configuration section
-    optimizer_name = clf_config.get("optimizer", "adamw")
+    optimizer_name = CONFIG["optimizer"]["optimizer_choice"]
     optimizer_params = {
         "lr": clf_config.get("lr", model_config.learning_rate),
-        "weight_decay": clf_config.get("weight_decay", 0.01),
+        "weight_decay": clf_config.get(
+            "weight_decay", CONFIG["optimizer"]["weight_decay"]
+        ),
     }
 
-    # Add optimizer-specific parameters
+    # Add optimizer-specific parameters from CONFIG
     if optimizer_name == "rmsprop":
         optimizer_params.update(
             {
-                "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
-                "alpha": clf_config.get("alpha", CONFIG["optimizer"]["alpha"]),
+                "momentum": CONFIG["optimizer"]["momentum"],
+                "alpha": CONFIG["optimizer"]["alpha"],
             }
         )
     elif optimizer_name == "sgd":
         optimizer_params.update(
             {
-                "momentum": clf_config.get("momentum", CONFIG["optimizer"]["momentum"]),
-                "nesterov": clf_config.get("nesterov", CONFIG["optimizer"]["nesterov"]),
+                "momentum": CONFIG["optimizer"]["momentum"],
+                "nesterov": CONFIG["optimizer"]["nesterov"],
             }
         )
     elif optimizer_name == "adamw":
@@ -206,12 +223,14 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
         optimizer_params.update(
             {
                 "betas": betas,
-                "eps": float(clf_config.get("eps", CONFIG["optimizer"]["eps"])),
+                "eps": float(CONFIG["optimizer"]["eps"]),
             }
         )
 
     # Update classifier config with optimizer settings
     clf_config["optimizer_config"] = optimizer_params
+
+    logger.info("Using BERT encoder from: %s", model_config.bert_encoder_path)
 
     # Load data with DataBundle return type
     data = load_and_preprocess_data(model_config)
@@ -235,12 +254,25 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
         model_config.batch_size,
     )
 
-    # Initialize model and trainer
+    # Always use local BERT encoder for training
+    bert_encoder_path = model_config.output_root / "bert_encoder"
+    if not bert_encoder_path.exists():
+        raise ValueError(f"BERT encoder not found at {bert_encoder_path}")
+
+    logger.info("Using local BERT encoder from: %s", bert_encoder_path)
+
+    # Initialize model for training
     model = BERTClassifier(
-        model_config.bert_model_name, model_config.num_classes, clf_config
+        bert_encoder_path=str(model_config.bert_encoder_path),
+        num_classes=model_config.num_classes,
+        classifier_config=clf_config,
     )
+
     trainer = Trainer(model, model_config)
 
+    logger.info(
+        "Creating %s optimizer with params: %s", optimizer_name, optimizer_params
+    )
     optimizer = create_optimizer(optimizer_name, model.parameters(), **optimizer_params)
 
     total_steps = len(train_dataloader) * model_config.num_epochs
@@ -276,30 +308,9 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
 
             if score > best_score:
                 best_score = score
-                # Create state dictionary with simplified structure
-                best_state = {
-                    "model_state": model.state_dict(),
-                    "config": clf_config.copy(),
-                    f"{model_config.metric}_score": score,
-                    "trial_number": None,
-                    "params": clf_config.copy(),
-                    "epoch": epoch,
-                    "metrics": metrics,
-                }
-
-                # Save using simplified format
-                save_dict = {
-                    "model_state_dict": best_state["model_state"],
-                    "config": clf_config,  # Direct config without nesting
-                    "metric_value": score,
-                    "study_name": "training",
-                    "trial_number": None,
-                    "num_classes": model_config.num_classes,
-                    "hyperparameters": clf_config,
-                    "val_size": 0.2,
-                    "metric": model_config.metric,
-                }
-                torch.save(save_dict, model_config.model_save_path)
+                save_best_model(
+                    model, model_config, score, model_config.model_save_path
+                )
 
                 # Add verbosity-specific logging
                 if model_config.verbosity >= 1:

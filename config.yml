@@ -1,6 +1,10 @@
 # Define base paths first with anchor
 output_root: &output_root /Users/tod/BERT_TRAINING
 
+# Model paths (updated to use absolute paths)
+model_paths:
+  bert_encoder: !join [*output_root, bert_encoder]  # This creates /Users/tod/BERT_TRAINING/bert_encoder
+
 # Define directory paths
 dirs: &dirs
   best_trials: best_trials

@@ -59,6 +59,7 @@ from src.utils.logging_manager import (
 )  # Change from setup_logger
 from src.utils.metrics import calculate_metrics
 from src.utils.model_loading import safe_load_checkpoint
+from ..utils.model_info import display_model_info  # Add import
 
 # Configure matplotlib once at module level
 plt.switch_backend("agg")  # Use non-interactive backend
@@ -149,167 +150,12 @@ class ModelEvaluator:
                 self.config.best_model, map_location=self.config.device
             )
 
-            logger.info("\nTraining Configuration:")
-            logger.info("-" * 50)
-
-            # Try multiple locations for optimizer info
-            optimizer_info = None
-            for key in ["hyperparameters", "config", "optimizer_config"]:
-                if key in checkpoint and isinstance(checkpoint[key], dict):
-                    cfg = checkpoint[key]
-                    if "optimizer" in cfg or "type" in cfg:
-                        optimizer_info = cfg
-                        logger.info("Found optimizer info in %s", key)
-                        break
-
-            # Also check optimizer state dict
-            if not optimizer_info and "optimizer_state_dict" in checkpoint:
-                optimizer_info = {
-                    "type": checkpoint["optimizer_state_dict"]["name"]
-                    if "name" in checkpoint["optimizer_state_dict"]
-                    else checkpoint["optimizer_state_dict"]["param_groups"][0].get(
-                        "name", "Unknown"
-                    ),
-                    "lr": checkpoint["optimizer_state_dict"]["param_groups"][0]["lr"],
-                    "weight_decay": checkpoint["optimizer_state_dict"]["param_groups"][
-                        0
-                    ].get("weight_decay", 0.0),
-                }
-
-            if optimizer_info:
-                logger.info("Optimizer Configuration:")
-                logger.info(
-                    "  Type: %s",
-                    optimizer_info.get('type', optimizer_info.get('optimizer', 'Unknown'))
-                )
-                logger.info("  Learning rate: %.6f", optimizer_info.get('lr', 0.0))
-                logger.info(
-                    "  Weight decay: %.6f", optimizer_info.get('weight_decay', 0.0)
-                )
-
-                # Add optimizer-specific parameters
-                if "betas" in optimizer_info:
-                    logger.info("  Betas: %s", optimizer_info['betas'])
-                if "momentum" in optimizer_info:
-                    logger.info("  Momentum: %.3f", optimizer_info['momentum'])
-                if "eps" in optimizer_info:
-                    logger.info("  Epsilon: %.8f", optimizer_info['eps'])
-            else:
-                logger.warning("No optimizer configuration found in checkpoint")
-
-            logger.info("-" * 50)
-
-            # Continue with existing model loading code
-            # More flexible state dict loading
-            state_dict = None
-            for key in ["model_state", "model_state_dict", "state_dict"]:
-                if key in checkpoint:
-                    state_dict = checkpoint[key]
-                    logger.debug("Found model state using key: %s", key)
-                    break
-
-            if state_dict is None:
-                # Debug checkpoint contents
-                logger.error(
-                    "Available keys in checkpoint: %s", list(checkpoint.keys())
-                )
-                raise ValueError("No model state found in checkpoint under known keys")
-
-            # Get classifier config with more flexible fallbacks
-            classifier_config = None
-            if "config" in checkpoint:
-                classifier_config = checkpoint["config"]
-            elif "hyperparameters" in checkpoint:
-                classifier_config = checkpoint["hyperparameters"]
-
-            if classifier_config is None:
-                raise ValueError("No configuration found in checkpoint")
-
-            # Extract nested config if needed
-            if (
-                isinstance(classifier_config, dict)
-                and "classifier_config" in classifier_config
-            ):
-                classifier_config = classifier_config["classifier_config"]
-
-            # Rest of loading logic remains the same
-            # Extract model configuration
-            num_classes = checkpoint.get("num_classes", self.config.num_classes)
-
-            # Validate critical parameters
-            if num_classes is None:
-                raise ValueError("num_classes not found in checkpoint")
-            if "hidden_dim" not in classifier_config:
-                raise ValueError("hidden_dim not found in classifier_config")
-
-            # Create model with configuration
-            self.model = BERTClassifier(
-                self.config.bert_model_name, num_classes, classifier_config
+            # Create model with configuration from checkpoint
+            self.model = BERTClassifier.from_checkpoint(
+                checkpoint=checkpoint,
+                num_classes=self.config.num_classes,
+                device=self.config.device,
             )
-
-            # Verify state dict matches
-            current_state = self.model.state_dict()
-            current_shapes = {k: v.shape for k, v in current_state.items()}
-            checkpoint_shapes = {k: v.shape for k, v in state_dict.items()}
-
-            # After loading state_dict but before returning model
-            # Log model architecture and training config details
-            logger.info("\nModel Configuration:")
-            logger.info("-" * 50)
-
-            # Log optimizer details if available
-            if "optimizer_state" in checkpoint:
-                opt_state = checkpoint["optimizer_state"]
-                logger.info(
-                    "Optimizer: %s",
-                    opt_state["name"] if "name" in opt_state else "Unknown",
-                )
-                logger.info("Learning rate: %.6f", opt_state["param_groups"][0]["lr"])
-
-                # Log optimizer-specific parameters
-                if "betas" in opt_state["param_groups"][0]:  # Adam/AdamW
-                    logger.info(
-                        "Betas: (%.3f, %.3f)", *opt_state["param_groups"][0]["betas"]
-                    )
-                if "momentum" in opt_state["param_groups"][0]:  # SGD
-                    logger.info(
-                        "Momentum: %.3f", opt_state["param_groups"][0]["momentum"]
-                    )
-                if "weight_decay" in opt_state["param_groups"][0]:
-                    logger.info(
-                        "Weight decay: %.6f",
-                        opt_state["param_groups"][0]["weight_decay"],
-                    )
-
-            if current_shapes != checkpoint_shapes:
-                logger.error("Model architecture mismatch:")
-                for key in set(current_shapes) | set(checkpoint_shapes):
-                    if key in current_shapes and key in checkpoint_shapes:
-                        if current_shapes[key] != checkpoint_shapes[key]:
-                            logger.error(
-                                "  %s: checkpoint=%s, current=%s",
-                                key,
-                                checkpoint_shapes[key],
-                                current_shapes[key],
-                            )
-                    elif key in current_shapes:
-                        logger.error(
-                            "  %s: missing in checkpoint (current=%s)",
-                            key,
-                            current_shapes[key],
-                        )
-                    else:
-                        logger.error(
-                            "  %s: unexpected in checkpoint (%s)",
-                            key,
-                            checkpoint_shapes[key],
-                        )
-                raise ValueError("Model architecture does not match checkpoint")
-
-            # Load the state dict
-            self.model.load_state_dict(state_dict)
-            self.model.to(self.config.device)
-            self.model.eval()
 
             logger.info("Successfully loaded model")
             return self.model
@@ -805,11 +651,9 @@ def main():
     # Resolve both paths:
     # 1. Model checkpoint path
     config.best_model = config.best_trials_dir / args.best_model
-    # 2. BERT encoder path
-    if not Path(config.bert_model_name).is_absolute():
-        config.bert_model_name = str(config.output_root / "bert_encoder")
+    # 2. BERT encoder path is now handled by ModelConfig's __post_init__
 
-    logger.info("Using BERT encoder from: %s", config.bert_model_name)
+    logger.info("Using BERT encoder from: %s", config.bert_encoder_path)
     logger.info("Loading model checkpoint from: %s", config.best_model)
 
     # Create evaluator and run evaluation

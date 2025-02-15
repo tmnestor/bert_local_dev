@@ -15,9 +15,11 @@ from .splitter import DataSplitter
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class DataBundle:
     """Container for dataset splits and label encoder."""
+
     train_texts: Optional[List[str]] = None
     val_texts: Optional[List[str]] = None
     train_labels: Optional[List[int]] = None
@@ -26,6 +28,7 @@ class DataBundle:
     test_labels: Optional[List[int]] = None
     label_encoder: Optional[LabelEncoder] = None
 
+
 def load_and_preprocess_data(
     config: ModelConfig, validation_mode: bool = False
 ) -> DataBundle:
@@ -33,14 +36,18 @@ def load_and_preprocess_data(
     logger.info("Loading data from: %s", config.data_file)
 
     try:
-        if not config.data_file.exists():
-            raise FileNotFoundError(f"Data file not found: {config.data_file}")
+        data_dir = config.data_dir
+        # For validation mode, try to load test.csv directly
+        if validation_mode and (data_dir / "test.csv").exists():
+            logger.info("Loading test split directly")
+            df = pd.read_csv(data_dir / "test.csv")
+        else:
+            df = pd.read_csv(config.data_file)
 
-        df = pd.read_csv(config.data_file)
-        df.name = config.data_file  # Store full path
-        logger.debug("Loaded %d rows from data file", len(df))
+        df.name = str(config.data_file)
+        logger.debug("Loaded %d rows", len(df))
     except Exception as e:
-        raise RuntimeError(f"Failed to load data file: {str(e)}") from e
+        raise RuntimeError(f"Failed to load data: {str(e)}") from e
 
     # Check for existing test split first if in validation mode
     test_file = config.data_dir / "test.csv"
@@ -55,9 +62,7 @@ def load_and_preprocess_data(
         test_texts = test_df["text"].tolist()
         test_labels = label_encoder.transform(test_df["category"])
         return DataBundle(
-            test_texts=test_texts,
-            test_labels=test_labels,
-            label_encoder=label_encoder
+            test_texts=test_texts, test_labels=test_labels, label_encoder=label_encoder
         )
 
     # If no test file or not in validation mode, proceed with normal flow
@@ -66,38 +71,19 @@ def load_and_preprocess_data(
     splitter = DataSplitter(config.data_dir)
     splits = splitter.load_splits(df)
 
-    # Log split information
-    logger.info("\nData Split Information:")
-    total = len(splits.train_texts) + len(splits.val_texts) + len(splits.test_texts)
-    logger.info("Total samples: %d", total)
-    logger.info(
-        "Training: %d (%.1f%%)",
-        len(splits.train_texts),
-        100 * len(splits.train_texts) / total,
-    )
-    logger.info(
-        "Validation: %d (%.1f%%)",
-        len(splits.val_texts),
-        100 * len(splits.val_texts) / total,
-    )
-    logger.info(
-        "Test: %d (%.1f%%)",
-        len(splits.test_texts),
-        100 * len(splits.test_texts) / total,
-    )
-
+    # Split info is now logged by DataSplitter
     if validation_mode:
         return DataBundle(
             test_texts=splits.test_texts,
             test_labels=splits.test_labels,
-            label_encoder=splits.label_encoder
+            label_encoder=splits.label_encoder,
         )
     return DataBundle(
         train_texts=splits.train_texts,
         val_texts=splits.val_texts,
         train_labels=splits.train_labels,
         val_labels=splits.val_labels,
-        label_encoder=splits.label_encoder
+        label_encoder=splits.label_encoder,
     )
 
 
@@ -107,14 +93,29 @@ def create_dataloaders(
     config: ModelConfig,
     batch_size: Optional[int] = None,
 ) -> Union[Tuple[DataLoader, DataLoader], DataLoader]:
-    """Create PyTorch DataLoaders."""
+    """Create PyTorch DataLoaders.
+
+    Note: max_seq_len from config is passed to dataset for tokenizer's use.
+    """
     if batch_size is None:
         batch_size = config.batch_size
 
-    # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config.bert_model_name)
+    # Try to load tokenizer from bert_encoder_path or fallback to default model
+    try:
+        if hasattr(config, "bert_encoder_path") and config.bert_encoder_path.exists():
+            tokenizer = AutoTokenizer.from_pretrained(str(config.bert_encoder_path))
+        else:
+            # Fallback to same model used in BERTClassifier
+            tokenizer = AutoTokenizer.from_pretrained(
+                "sentence-transformers/all-MiniLM-L6-v2"
+            )
+    except Exception as e:
+        logger.warning("Failed to load tokenizer from path: %s", str(e))
+        tokenizer = AutoTokenizer.from_pretrained(
+            "sentence-transformers/all-MiniLM-L6-v2"
+        )
 
-    # Handle different input formats
+    # Create datasets with max_seq_len from config
     if isinstance(texts[0], list):  # Multiple sets (train/val)
         train_dataset = TextClassificationDataset(
             texts[0], labels[0], tokenizer, config.max_seq_len
@@ -122,11 +123,10 @@ def create_dataloaders(
         val_dataset = TextClassificationDataset(
             texts[1], labels[1], tokenizer, config.max_seq_len
         )
-
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size)
-
-        return train_loader, val_loader
+        return (
+            DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
+            DataLoader(val_dataset, batch_size=batch_size),
+        )
     else:  # Single set (test)
         dataset = TextClassificationDataset(
             texts, labels, tokenizer, config.max_seq_len

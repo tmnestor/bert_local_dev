@@ -33,6 +33,14 @@ class BaseConfig:
         save_json(path): Saves config as JSON file
     """
 
+    def __init__(self, **kwargs):
+        """Initialize allowing unknown kwargs."""
+        # Only set attributes that are defined in the class
+        known_fields = {f.name for f in fields(self)}
+        for name, value in kwargs.items():
+            if name in known_fields:
+                setattr(self, name, value)
+
     def validate(self) -> None:
         """Validates all configuration parameters.
 

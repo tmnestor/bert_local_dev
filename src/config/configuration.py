@@ -111,10 +111,11 @@ CONFIG = load_yaml_config()
 class ModelConfig(BaseConfig):
     """Strongly typed configuration for model training."""
 
-    # Replace all hardcoded defaults with config.yml values
-    bert_model_name: str = field(
-        default_factory=lambda: CONFIG["model"].get("bert_model_name", "./bert_encoder")
+    # Make bert_encoder_path a required init field instead of init=False
+    bert_encoder_path: Path = field(
+        default_factory=lambda: Path(CONFIG["model_paths"]["bert_encoder"])
     )
+
     num_classes: Optional[int] = field(
         default_factory=lambda: CONFIG["classifier"].get("num_classes")
     )
@@ -148,7 +149,17 @@ class ModelConfig(BaseConfig):
 
     def __post_init__(self):
         """Initialize paths after creation."""
-        # Initialize directories
+        # Validate BERT encoder path first since it's crucial
+        if not isinstance(self.bert_encoder_path, Path):
+            self.bert_encoder_path = Path(self.bert_encoder_path)
+
+        if not self.bert_encoder_path.exists():
+            raise ValueError(
+                f"BERT encoder not found at {self.bert_encoder_path}. "
+                "This is a required component for the model to function."
+            )
+
+        # Initialize other directories
         self.best_trials_dir = self.output_root / "best_trials"
         self.evaluation_dir = self.output_root / "evaluation_results"
         self.logs_dir = self.output_root / "logs"
@@ -188,10 +199,10 @@ class ModelConfig(BaseConfig):
         # Model settings
         model_group = parser.add_argument_group("Model Configuration")
         model_group.add_argument(
-            "--bert_model_name",
-            type=str,
-            default=CONFIG["model"].get("bert_model_name", "./bert_encoder"),
-            help="Path to BERT model",
+            "--bert_encoder_path",  # Updated arg name for consistency
+            type=Path,
+            default=CONFIG["model_paths"]["bert_encoder"],
+            help="Path to BERT encoder (required)",
         )
         model_group.add_argument(
             "--num_classes",
@@ -322,10 +333,7 @@ class EvaluationConfig(ModelConfig):
             help="Metrics to compute",
         )
         eval_group.add_argument(
-            "--n_folds", 
-            type=int,
-            default=7,
-            help="Number of cross-validation folds"
+            "--n_folds", type=int, default=7, help="Number of cross-validation folds"
         )
 
 
@@ -333,37 +341,36 @@ class EvaluationConfig(ModelConfig):
 class PredictionConfig(ModelConfig):
     """Configuration for prediction tasks."""
 
-    best_model: Path = field(default=None)  # Like EvaluationConfig
-    output_dir: Path = field(init=False)
+    best_model: Path = field(default=None)
+    output_file: str = field(default="predictions.csv")
+    num_classes: int = field(default=None)
+    max_seq_len: int = field(default_factory=lambda: CONFIG["model"]["max_seq_len"])
 
     def __post_init__(self):
-        """Initialize paths after parent initialization."""
+        """Initialize paths and ensure bert_encoder_path exists."""
+        # Set bert_encoder_path before calling parent's post_init
+        self.bert_encoder_path = self.output_root / "bert_encoder"
+
+        # Now call parent's post_init
         super().__post_init__()
-        self.output_dir = self.predictions_dir = self.output_root / "predictions"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Don't set best_model path here - let main() handle it
+        # Add prediction-specific directories
+        self.predictions_dir = self.output_root / "predictions"
+        self.predictions_dir.mkdir(parents=True, exist_ok=True)
 
-    @classmethod
-    def add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
-        """Add prediction-specific command line arguments."""
-        # First add parent's arguments
-        super().add_argparse_args(parser)
+        # Set output_dir to predictions_dir
+        self.output_dir = self.predictions_dir
 
-        # Add prediction-specific arguments
-        predict_group = parser.add_argument_group("Prediction")
-        predict_group.add_argument(
-            "--best_model",
-            type=str,
-            required=True,
-            help="Model file name (relative to best_trials_dir)",
-        )
-        predict_group.add_argument(
-            "--output_file",
-            type=str,
-            default="predictions.csv",
-            help="Output filename for predictions",
-        )
+        # Load max_seq_len from config if not already set
+        if self.max_seq_len is None:
+            config = load_yaml_config()
+            self.max_seq_len = config["model"]["max_seq_len"]
+
+        # Verify bert_encoder_path exists
+        if not self.bert_encoder_path.exists():
+            raise ValueError(f"BERT encoder not found at {self.bert_encoder_path}")
+
+    # ...rest of class remains unchanged...
 
 
 def get_config(args: Optional[argparse.Namespace] = None) -> ModelConfig:

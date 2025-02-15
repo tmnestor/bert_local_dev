@@ -34,7 +34,7 @@ Note:
     or through the Hugging Face model hub.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn.functional as F
@@ -50,29 +50,74 @@ class BERTClassifier(nn.Module):
     """BERT-based text classifier with configurable feed-forward head."""
 
     def __init__(
-        self, bert_model_name: str, num_classes: int, classifier_config: Dict[str, Any]
+        self,
+        bert_encoder_path: Optional[str],
+        num_classes: int,
+        classifier_config: Dict[str, Any],
     ) -> None:
+        """Initialize the classifier."""
         super().__init__()
         self._validate_config(classifier_config)
         self.classifier_config = classifier_config
 
-        self.bert = AutoModel.from_pretrained(bert_model_name)
-        for param in self.bert.parameters():
-            param.requires_grad = False
+        # Get BERT hidden size from config or default
+        self.bert_hidden_size = classifier_config.get(
+            "bert_hidden_size",
+            384,  # Default size for all-MiniLM-L6-v2
+        )
 
-        hidden_size = self.bert.config.hidden_size
-        self.classifier = self._build_classifier(hidden_size, num_classes)
+        if bert_encoder_path:  # Training mode
+            logger.info(
+                "Training Mode: Loading BERT encoder from %s", bert_encoder_path
+            )
+            self.bert = AutoModel.from_pretrained(bert_encoder_path)
+            # Update hidden size from loaded model
+            self.bert_hidden_size = self.bert.config.hidden_size
+            for param in self.bert.parameters():
+                param.requires_grad = False
+        else:  # Inference mode
+            logger.info("Inference Mode: BERT will be loaded from checkpoint")
+            self.bert = AutoModel.from_pretrained(
+                "sentence-transformers/all-MiniLM-L6-v2"
+            )
+            self.bert_hidden_size = self.bert.config.hidden_size
 
-        # Add model architecture logging for debug level
+        # Build classifier layers with confirmed bert_hidden_size
+        self.classifier = self._build_classifier(self.bert_hidden_size, num_classes)
+
+        # Add model architecture logging
         logger.debug("\nModel Architecture:")
         logger.debug("=" * 50)
-        logger.debug("BERT hidden size: %d", hidden_size)
+        logger.debug("BERT hidden size: %d", self.bert_hidden_size)
         logger.debug("Hidden layers: %s", classifier_config["hidden_dim"])
         logger.debug("Activation: %s", classifier_config.get("activation", "gelu"))
         logger.debug("Dropout: %.3f", classifier_config.get("dropout_rate", 0.1))
         logger.debug("Total parameters: %d", sum(p.numel() for p in self.parameters()))
-        logger.debug("Trainable parameters: %d", sum(p.numel() for p in self.parameters() if p.requires_grad))
+        logger.debug(
+            "Trainable parameters: %d",
+            sum(p.numel() for p in self.parameters() if p.requires_grad),
+        )
         logger.debug("=" * 50)
+
+    @classmethod
+    def from_checkpoint(
+        cls, checkpoint: Dict, num_classes: int, device: str = "cpu"
+    ) -> "BERTClassifier":
+        """Create model instance from checkpoint."""
+        config = checkpoint.get("config")
+        if not config:
+            raise ValueError("No configuration found in checkpoint")
+
+        # Create model in inference mode (bert_encoder_path=None)
+        model = cls(
+            bert_encoder_path=None, num_classes=num_classes, classifier_config=config
+        )
+
+        # Load state dict
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.to(device)
+        model.eval()
+        return model
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
         """Validates the classifier configuration."""

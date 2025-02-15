@@ -266,11 +266,9 @@ def run_optimization(
     n_trials: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run hyperparameter optimization for the BERT classifier."""
-    # Ensure bert_model_name is absolute
-    if not Path(model_config.bert_model_name).is_absolute():
-        model_config.bert_model_name = str(model_config.output_root / "bert_encoder")
-
-    logger.info("Using BERT encoder from: %s", model_config.bert_model_name)
+    # BERT encoder path is now handled by ModelConfig's __post_init__
+    # Just log the path we're using
+    logger.info("Using BERT encoder from: %s", model_config.bert_encoder_path)
 
     # Only show detailed info if verbosity > 0
     if model_config.verbosity > 0:
@@ -340,8 +338,9 @@ def run_optimization(
             callbacks=[
                 # Add new callback for logging best info
                 lambda study, trial: (
-                    log_current_best(global_best_info, experiment_name) 
-                    if trial.value and trial.value > study.user_attrs.get("best_value", float("-inf"))
+                    log_current_best(global_best_info, experiment_name, model_config)
+                    if trial.value
+                    and trial.value > study.user_attrs.get("best_value", float("-inf"))
                     else None
                 ),
                 save_trial_callback(experiment_name, model_config, global_best_info),
@@ -355,22 +354,34 @@ def run_optimization(
     finally:
         trial_pbar.close()
 
-        # Fix the condition and null check
+        # Update the final best trial printing format
         if (
             global_best_info is not None
             and "model_info" in global_best_info
             and global_best_info["model_info"] is not None
         ):
-            print("\nBest Trial Configuration:")
-            print("=" * 50)
-            print(f"Trial Number: {global_best_info['model_info']['trial_number']}")
-            print(f"Score: {global_best_info['score']:.4f}")
-            print("\nHyperparameters:")
-            for key, value in global_best_info["model_info"]["params"].items():
-                print(f"  {key}: {value}")
-            print("=" * 50)
+            info = global_best_info["model_info"]
 
-            # Always save best model regardless of verbosity
+            print("\nBest Trial Configuration")
+            print("=" * 80)
+            print(f"Study: {experiment_name}")
+            print(
+                f"Trial: {info['trial_number']} (score: {global_best_info['score']:.4f})"
+            )
+            print(
+                f"Epochs: {info['epoch'] + 1}/{model_config.num_epochs} (early stopping)"
+            )  # Add epochs info
+            print("\nModel Architecture:")
+            print(f"  Hidden layers: {info['config']['hidden_dim']}")
+            print(f"  Activation: {info['config']['activation']}")
+            print(f"  Dropout rate: {info['config']['dropout_rate']:.4f}")
+            print("\nOptimizer Settings:")
+            print(f"  Type: {info['config']['optimizer']}")
+            print(f"  Learning rate: {info['config']['lr']:.6f}")
+            print(f"  Weight decay: {info['config']['weight_decay']:.6f}")
+            print(f"  Warmup ratio: {info['config']['warmup_ratio']:.4f}")
+            print("=" * 80)
+
             save_best_trial(
                 global_best_info["model_info"], experiment_name, model_config
             )
@@ -425,7 +436,9 @@ def setup_training_components(
 ):
     """Set up model, trainer, optimizer and scheduler."""
     model = BERTClassifier(
-        model_config.bert_model_name, model_config.num_classes, classifier_config
+        bert_encoder_path=str(model_config.bert_encoder_path),  # Use bert_encoder_path
+        num_classes=model_config.num_classes,
+        classifier_config=classifier_config,
     )
     trainer = Trainer(model, model_config)
 
@@ -486,7 +499,7 @@ class MemoryManager:
 
         Returns:
             float: Memory usage percentage (0-100) for the current process.
-            
+
         Note:
             Uses psutil.Process().memory_percent() which returns the process's
             current memory utilization as a percentage of total system memory.
@@ -600,19 +613,22 @@ def get_optimizer_config(trial, optimizer_name, lr):  # Changed parameter name
     return optimizer_config
 
 
-def log_current_best(best_info: Dict[str, Any], study_name: str) -> None:
+def log_current_best(
+    best_info: Dict[str, Any], study_name: str, model_config: ModelConfig
+) -> None:
     """Log current best trial information in a structured format."""
     if not best_info.get("model_info"):
         return
 
     separator = "=" * 80
     info = best_info["model_info"]
-    
+
     log_msg = [
         "\nCurrent Best Trial Configuration",
         separator,
         f"Study: {study_name}",
         f"Trial: {info['trial_number']} (score: {best_info['score']:.4f})",
+        f"Epochs: {info['epoch'] + 1}/{model_config.num_epochs} (early stopping)",  # Add epochs info
         "\nModel Architecture:",
         f"  Hidden layers: {info['config']['hidden_dim']}",
         f"  Activation: {info['config']['activation']}",
@@ -624,8 +640,7 @@ def log_current_best(best_info: Dict[str, Any], study_name: str) -> None:
         f"  Warmup ratio: {info['config']['warmup_ratio']:.4f}",
         separator,
     ]
-    
-    # Print to console and log file
+
     logger.info("\n".join(log_msg))
 
 
@@ -911,16 +926,7 @@ def objective(
 def save_trial_callback(
     trial_study_name: str, model_config: ModelConfig, best_model_info: Dict[str, Any]
 ):
-    """Create a callback for saving trial information.
-
-    Args:
-        trial_study_name: Name of the optimization study.
-        model_config: Model configuration instance.
-        best_model_info: Dictionary tracking best model state.
-
-    Returns:
-        Callable: Callback function for Optuna.
-    """
+    """Create a callback for saving trial information."""
 
     def callback(study: optuna.Study, trial: optuna.Trial):
         if trial.value and trial.value > study.user_attrs.get(
@@ -928,17 +934,42 @@ def save_trial_callback(
         ):
             study.set_user_attr("best_value", trial.value)
             model_config.best_trials_dir.mkdir(exist_ok=True, parents=True)
-            # Ensure model_info exists
+
+            # Get model info
             model_info = best_model_info.get("model_info", {})
-            best_trial_info = {
-                "trial_number": trial.number,
-                "params": trial.params,
-                "value": trial.value,
+
+            # Create detailed training info
+            training_details = {
                 "study_name": trial_study_name,
-                "best_model_score": best_model_info["score"],
-                "model_state": model_info.get("model_state"),
-                "config": model_info.get("config", {}),
+                "trial_number": trial.number,
+                "score": trial.value,
+                "total_epochs": model_config.num_epochs,
+                "completed_epochs": model_info.get("epoch", 0) + 1,
+                "early_stopping": True
+                if model_info.get("epoch", 0) + 1 < model_config.num_epochs
+                else False,
+                "architecture": {
+                    "hidden_layers": model_info.get("config", {}).get("hidden_dim"),
+                    "activation": model_info.get("config", {}).get("activation"),
+                    "dropout_rate": model_info.get("config", {}).get("dropout_rate"),
+                },
+                "optimizer": {
+                    "type": model_info.get("config", {}).get("optimizer"),
+                    "learning_rate": model_info.get("config", {}).get("lr"),
+                    "weight_decay": model_info.get("config", {}).get("weight_decay"),
+                    "warmup_ratio": model_info.get("config", {}).get("warmup_ratio"),
+                },
             }
+
+            # Save everything
+            best_trial_info = {
+                "model_state_dict": model_info.get("model_state"),
+                "config": model_info.get("config", {}),
+                "training_details": training_details,  # Add detailed training info
+                "hyperparameters": trial.params,
+                "value": trial.value,
+            }
+
             torch.save(
                 best_trial_info,
                 model_config.best_trials_dir / f"best_trial_{trial_study_name}.pt",
