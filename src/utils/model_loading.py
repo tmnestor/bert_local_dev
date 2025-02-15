@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
 import torch
 import pickle
@@ -163,3 +163,64 @@ def verify_state_dict(
 
     except Exception as e:
         raise ValueError(f"State dict verification failed: {str(e)}") from e
+
+
+def load_model_checkpoint(
+    checkpoint_path: Union[str, Path], default_root: Optional[Path] = None
+) -> Dict:
+    """Load model checkpoint with flexible path resolution.
+
+    Args:
+        checkpoint_path: Either absolute path or relative to best_trials dir
+        default_root: Default output root directory containing best_trials
+
+    Returns:
+        Dict containing model checkpoint data
+
+    Raises:
+        FileNotFoundError: If checkpoint cannot be found
+        RuntimeError: If checkpoint loading fails
+    """
+    checkpoint_path = Path(checkpoint_path)
+
+    # Try direct path first
+    if checkpoint_path.is_absolute() and checkpoint_path.exists():
+        logger.debug("Loading checkpoint from absolute path: %s", checkpoint_path)
+    else:
+        # Try relative to best_trials directory
+        if default_root:
+            best_trials_dir = default_root / "best_trials"
+            relative_path = best_trials_dir / checkpoint_path.name
+            if relative_path.exists():
+                checkpoint_path = relative_path
+                logger.debug("Loading checkpoint from best_trials: %s", checkpoint_path)
+            else:
+                raise FileNotFoundError(
+                    f"Checkpoint not found at {checkpoint_path} or in {best_trials_dir}"
+                )
+        else:
+            raise ValueError("If using relative path, default_root must be provided")
+
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+        # Validate checkpoint contents
+        required_keys = ["model_state_dict", "config"]
+        missing_keys = [key for key in required_keys if key not in checkpoint]
+        if missing_keys:
+            raise ValueError(f"Checkpoint missing required keys: {missing_keys}")
+
+        logger.info("Successfully loaded checkpoint: %s", checkpoint_path.name)
+        if "training_details" in checkpoint:
+            details = checkpoint["training_details"]
+            logger.debug(
+                "Model info - Study: %s, Trial: %d, Score: %.4f",
+                details.get("study_name", "unknown"),
+                details.get("trial_number", -1),
+                details.get("score", float("nan")),
+            )
+
+        return checkpoint
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to load checkpoint: {str(e)}") from e

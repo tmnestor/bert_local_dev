@@ -43,6 +43,7 @@ from torch import nn
 from transformers import AutoModel
 
 from ..utils.logging_manager import get_logger
+from ..utils.model_loading import load_model_checkpoint
 
 logger = get_logger(__name__)
 
@@ -106,8 +107,18 @@ class BERTClassifier(nn.Module):
     def from_checkpoint(
         cls, checkpoint: Dict, num_classes: int, device: str = "cpu"
     ) -> "BERTClassifier":
-        """Create model instance from checkpoint."""
+        """Create model instance from checkpoint.
+
+        Args:
+            checkpoint: Either the checkpoint dict or a path to the checkpoint file
+            num_classes: Number of output classes
+            device: Device to load model on
+        """
         logger.debug("Loading model from checkpoint...")
+
+        # Handle checkpoint being a path
+        if isinstance(checkpoint, (str, Path)):
+            checkpoint = load_model_checkpoint(checkpoint)
 
         config = checkpoint.get("config", {})
         if not config:
