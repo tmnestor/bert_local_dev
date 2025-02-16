@@ -418,6 +418,7 @@ def save_best_trial(
             "hyperparameters": best_model_info["params"],
             "val_size": 0.2,
             "metric": model_config.metric,
+            "bert_encoder_path": str(model_config.bert_encoder_path),  # Add this line
         }
         torch.save(save_dict, final_model_path)
         logger.info(
@@ -887,6 +888,9 @@ def objective(
                         "params": current_params.copy(),
                         "epoch": epoch,
                         "metrics": metrics,
+                        "bert_encoder_path": str(
+                            model_config.bert_encoder_path
+                        ),  # Add this line
                     }
 
                 # Early stopping checks
@@ -961,13 +965,17 @@ def save_trial_callback(
                 },
             }
 
-            # Save everything
+            # Save everything including bert_encoder_path
             best_trial_info = {
                 "model_state_dict": model_info.get("model_state"),
                 "config": model_info.get("config", {}),
-                "training_details": training_details,  # Add detailed training info
+                "training_details": training_details,
                 "hyperparameters": trial.params,
                 "value": trial.value,
+                "bert_encoder_path": str(
+                    model_config.bert_encoder_path
+                ),  # Add this line
+                "num_classes": model_config.num_classes,  # Also add this for completeness
             }
 
             torch.save(

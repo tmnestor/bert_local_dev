@@ -39,22 +39,19 @@ model:
 # Classifier architecture defaults
 classifier:
   bert_hidden_size: 384
-  hidden_dims: [412, 220, 118]  # These will be the hidden layer sizes
-  dropout_rate: 0.3499496966142211
-  activation: gelu
+  hidden_dims: [220]  # These will be the hidden layer sizes
+  dropout_rate: 0.4396
+  activation: prelu
   num_classes: 5
 
 # Optimizer configuration
 optimizer: 
-  optimizer_choice: adamw  # One of: rmsprop, sgd, adamw
-  lr: 0.0030733180101378092
-  weight_decay: 0.005849785104191507
-  warmup_ratio: 0.16512063874129088
-  # RMSprop specific
-  momentum: 0.367  # Used by both RMSprop and SGD
-  alpha: 0.864    # RMSprop only
-  # SGD specific
-  nesterov: true  # SGD only
-  # AdamW specific
-  betas: (0.6556849067584876, 0.9989954180359887)      # AdamW only
-  eps: 2.9849547332547365e-07       # AdamW only
+  optimizer_choice: rmsprop                       # One of: rmsprop, sgd, adamw
+  lr: 0.000004
+  weight_decay: 0.000013
+  warmup_ratio: 0.1385                            # Add warmup_ratio with default value
+  momentum: 0.0000                                # RMSprop and SGD only
+  alpha: 0.9900                                   # RMSprop only
+  nesterov: true                                  # SGD only
+  betas: (0.6556849067584876, 0.9989954180359887) # AdamW only
+  eps: 2.9849547332547365e-07                     # AdamW only

@@ -63,28 +63,25 @@ class BERTClassifier(nn.Module):
         self.classifier_config = classifier_config
         self.bert_hidden_size = classifier_config.get("bert_hidden_size", 384)
 
-        if bert_encoder_path:  # Training mode - loading from local path only
-            if not Path(bert_encoder_path).exists():
-                raise ValueError(f"BERT encoder not found at: {bert_encoder_path}")
-            logger.info(
-                "Training Mode: Loading local BERT encoder from %s", bert_encoder_path
+        # Strictly enforce local BERT encoder path
+        if not bert_encoder_path:
+            raise ValueError(
+                "bert_encoder_path is required - models must be available locally"
             )
-            try:
-                self.bert = AutoModel.from_pretrained(
-                    bert_encoder_path, local_files_only=True
-                )
-                self.bert_hidden_size = self.bert.config.hidden_size
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to load local BERT encoder: {str(e)}"
-                ) from e
-        else:  # Inference mode - create empty model to match state dict
-            logger.info("Inference Mode: Creating empty BERT model to load checkpoint")
-            # Create empty model with same architecture as training
+
+        if not Path(bert_encoder_path).exists():
+            raise ValueError(f"BERT encoder not found at: {bert_encoder_path}")
+
+        logger.info("Loading local BERT encoder from %s", bert_encoder_path)
+        try:
             self.bert = AutoModel.from_pretrained(
-                "sentence-transformers/all-MiniLM-L6-v2", local_files_only=True
+                bert_encoder_path,
+                local_files_only=True,
+                trust_remote_code=False,  # Additional safety measure
             )
             self.bert_hidden_size = self.bert.config.hidden_size
+        except Exception as e:
+            raise RuntimeError(f"Failed to load local BERT encoder: {str(e)}") from e
 
         # Build classifier layers
         self.classifier = self._build_classifier(self.bert_hidden_size, num_classes)
@@ -124,10 +121,17 @@ class BERTClassifier(nn.Module):
         if not config:
             raise ValueError("No configuration found in checkpoint")
 
+        # Get bert_encoder_path from config
+        bert_encoder_path = checkpoint.get("bert_encoder_path")
+        if not bert_encoder_path:
+            raise ValueError("bert_encoder_path not found in checkpoint")
+
         # Create model with empty BERT that matches architecture
         logger.debug("Creating model structure...")
         model = cls(
-            bert_encoder_path=None, num_classes=num_classes, classifier_config=config
+            bert_encoder_path=bert_encoder_path,
+            num_classes=num_classes,
+            classifier_config=config,
         )
 
         logger.debug("Loading state dict from checkpoint...")

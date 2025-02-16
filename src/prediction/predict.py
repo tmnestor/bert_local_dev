@@ -179,6 +179,20 @@ def save_minimal_predictions(df: pd.DataFrame, output_path: Path) -> None:
 class Predictor(ModelEvaluator):
     """Handles model prediction without evaluation."""
 
+    @classmethod
+    def from_config(cls, config: PredictionConfig) -> "Predictor":
+        """Create predictor instance from configuration."""
+        # Load config defaults first
+        yml_config = load_yaml_config()
+
+        # Ensure bert_encoder_path is set
+        if not hasattr(config, "bert_encoder_path"):
+            config.bert_encoder_path = Path(yml_config["model_paths"]["bert_encoder"])
+            if not config.bert_encoder_path.is_absolute():
+                config.bert_encoder_path = config.output_root / config.bert_encoder_path
+
+        return cls(model_path=config.best_model, config=config)
+
     def predict(
         self, save_predictions: bool = True, output_file: str = "predictions.csv"
     ) -> pd.DataFrame:
@@ -187,18 +201,14 @@ class Predictor(ModelEvaluator):
             # Load data and get label encoder
             data = load_and_preprocess_data(self.config, validation_mode=True)
 
-            # Load prediction data
-            try:
-                df = pd.read_csv(self.config.data_file)
-                texts = df["text"].tolist()
-            except Exception as e:
-                raise RuntimeError(f"Failed to load input data: {str(e)}") from e
+            # Create new DataFrame if not loaded
+            df = pd.read_csv(self.config.data_file)
 
-            # Create dataloader without labels
+            # Create dataloader - self.config now has bert_encoder_path from ModelConfig
             test_dataloader = create_dataloaders(
-                texts=texts,
-                labels=[0] * len(texts),  # Dummy labels
-                config=self.config,
+                texts=data.test_texts,
+                labels=data.test_labels,
+                config=self.config,  # This config now has bert_encoder_path
                 batch_size=self.config.batch_size,
             )
 
@@ -231,12 +241,6 @@ class Predictor(ModelEvaluator):
                 save_minimal_predictions(df, output_path)
 
             return df
-
-    @classmethod
-    def from_config(cls, config: PredictionConfig) -> "Predictor":
-        """Create predictor instance from configuration."""
-        # Just use config.best_model which is already a full path
-        return cls(model_path=config.best_model, config=config)
 
 
 def main():

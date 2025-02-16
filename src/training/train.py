@@ -159,10 +159,10 @@ def save_best_model(
             "lr": CONFIG["optimizer"]["lr"],
             "weight_decay": CONFIG["optimizer"]["weight_decay"],
         },
+        "bert_encoder_path": str(config.bert_encoder_path),  # Add this line
     }
 
     try:
-        # Use imported save_checkpoint function
         save_checkpoint(
             path=path,
             model_state=checkpoint["model_state_dict"],
@@ -170,6 +170,7 @@ def save_best_model(
             num_classes=checkpoint["num_classes"],
             metric_value=checkpoint["metric_value"],
             hyperparameters=checkpoint["hyperparameters"],
+            bert_encoder_path=checkpoint["bert_encoder_path"],  # Add this line
         )
         logger.info("Saved best model to: %s", path)
     except Exception as e:
@@ -177,57 +178,108 @@ def save_best_model(
         raise
 
 
-def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
-    """Trains a BERT classifier model with given configuration."""
-    if clf_config is None:
-        clf_config = {
-            "hidden_dim": CLASSIFIER_DEFAULTS["hidden_dims"],
-            "activation": CLASSIFIER_DEFAULTS["activation"],
-            "dropout_rate": CLASSIFIER_DEFAULTS["dropout_rate"],
-            "bert_hidden_size": CLASSIFIER_DEFAULTS["bert_hidden_size"],
-            "optimizer": CONFIG["optimizer"]["optimizer_choice"],
-            "lr": CONFIG["optimizer"]["lr"],
-            "weight_decay": CONFIG["optimizer"]["weight_decay"],
-            "warmup_ratio": CONFIG["optimizer"]["warmup_ratio"],
-        }
-
-    # Single optimizer configuration section
-    optimizer_name = CONFIG["optimizer"]["optimizer_choice"]
-    optimizer_params = {
-        "lr": clf_config.get("lr", model_config.learning_rate),
-        "weight_decay": clf_config.get(
-            "weight_decay", CONFIG["optimizer"]["weight_decay"]
-        ),
+def save_model(model, config, optimizer, metrics, epoch, trial_number=None):
+    """Save model checkpoint with complete configuration."""
+    save_dict = {
+        "model_state_dict": model.state_dict(),
+        "config": {
+            "hidden_dim": model.classifier_config["hidden_dim"],
+            "activation": model.classifier_config["activation"],
+            "dropout_rate": model.classifier_config["dropout_rate"],
+            "optimizer": optimizer.__class__.__name__.lower(),  # Get actual optimizer type
+            "lr": optimizer.param_groups[0]["lr"],
+            "weight_decay": optimizer.param_groups[0]["weight_decay"],
+            "warmup_ratio": config.optimizer.get("warmup_ratio", 0.0),
+        },
+        # Add complete training details
+        "training_details": {
+            "study_name": "training",  # or config.study_name if available
+            "trial_number": trial_number or 0,
+            "score": metrics.get(config.metric, 0.0),
+            "total_epochs": config.num_epochs,
+            "completed_epochs": epoch + 1,
+            "early_stopping": epoch + 1 < config.num_epochs,
+            "architecture": {
+                "hidden_layers": model.classifier_config["hidden_dim"],
+                "activation": model.classifier_config["activation"],
+                "dropout_rate": model.classifier_config["dropout_rate"],
+            },
+            "optimizer": {
+                "type": optimizer.__class__.__name__.lower(),
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "weight_decay": optimizer.param_groups[0]["weight_decay"],
+                "warmup_ratio": config.optimizer.get("warmup_ratio", 0.0),
+                # Add optimizer-specific parameters
+                "betas": getattr(optimizer, "betas", None),  # AdamW
+                "eps": getattr(optimizer, "eps", None),  # AdamW
+                "momentum": getattr(optimizer, "momentum", None),  # SGD/RMSprop
+                "alpha": getattr(optimizer, "alpha", None),  # RMSprop
+                "nesterov": getattr(optimizer, "nesterov", None),  # SGD
+            },
+        },
+        "metrics": metrics,
     }
 
-    # Add optimizer-specific parameters from CONFIG
+    # Save to file
+    save_path = config.model_save_path
+    torch.save(save_dict, save_path)
+    logger.info(f"Model saved to {save_path}")
+
+
+def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
+    """Trains a BERT classifier model with given configuration."""
+    # Load fresh config
+    config_dict = load_yaml_config()
+    opt_config = config_dict["optimizer"]  # No need for .get() since we know it exists
+
+    if clf_config is None:
+        clf_config = {
+            "hidden_dim": config_dict["classifier"]["hidden_dims"],
+            "activation": config_dict["classifier"]["activation"],
+            "dropout_rate": config_dict["classifier"]["dropout_rate"],
+            "bert_hidden_size": config_dict["classifier"]["bert_hidden_size"],
+            "optimizer": opt_config["optimizer_choice"],
+            "lr": opt_config["lr"],
+            "weight_decay": opt_config["weight_decay"],
+            "warmup_ratio": opt_config[
+                "warmup_ratio"
+            ],  # Directly use value from config
+        }
+
+    # Get optimizer params from config.yml
+    optimizer_name = config_dict["optimizer"]["optimizer_choice"]
+    optimizer_params = {
+        "lr": config_dict["optimizer"]["lr"],
+        "weight_decay": config_dict["optimizer"]["weight_decay"],
+    }
+
+    # Get optimizer-specific params directly from config.yml
     if optimizer_name == "rmsprop":
         optimizer_params.update(
             {
-                "momentum": CONFIG["optimizer"]["momentum"],
-                "alpha": CONFIG["optimizer"]["alpha"],
+                "momentum": config_dict["optimizer"]["momentum"],
+                "alpha": config_dict["optimizer"]["alpha"],
             }
         )
     elif optimizer_name == "sgd":
         optimizer_params.update(
             {
-                "momentum": CONFIG["optimizer"]["momentum"],
-                "nesterov": CONFIG["optimizer"]["nesterov"],
+                "momentum": config_dict["optimizer"]["momentum"],
+                "nesterov": config_dict["optimizer"]["nesterov"],
             }
         )
     elif optimizer_name == "adamw":
-        # Ensure betas is a tuple of floats
-        betas = CONFIG["optimizer"]["betas"]
-        if isinstance(betas, (list, tuple)):
-            betas = tuple(float(x) for x in betas)
+        betas = config_dict["optimizer"]["betas"]
+        if isinstance(betas, str):
+            betas = tuple(float(x.strip()) for x in betas.strip("()").split(","))
         optimizer_params.update(
             {
                 "betas": betas,
-                "eps": float(CONFIG["optimizer"]["eps"]),
+                "eps": float(config_dict["optimizer"]["eps"]),
             }
         )
 
-    # Update classifier config with optimizer settings
+    # Add optimizer config to classifier config
     clf_config["optimizer_config"] = optimizer_params
 
     logger.info("Using BERT encoder from: %s", model_config.bert_encoder_path)
@@ -276,9 +328,9 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
     optimizer = create_optimizer(optimizer_name, model.parameters(), **optimizer_params)
 
     total_steps = len(train_dataloader) * model_config.num_epochs
-    warmup_steps = int(
-        total_steps * clf_config["warmup_ratio"]
-    )  # Get from clf_config instead of model_config
+    warmup_steps = int(total_steps * opt_config["warmup_ratio"])
+
+    # Create linear warmup scheduler
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps
     )

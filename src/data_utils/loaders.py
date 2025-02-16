@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import pandas as pd
@@ -93,27 +94,32 @@ def create_dataloaders(
     config: ModelConfig,
     batch_size: Optional[int] = None,
 ) -> Union[Tuple[DataLoader, DataLoader], DataLoader]:
-    """Create PyTorch DataLoaders.
-
-    Note: max_seq_len from config is passed to dataset for tokenizer's use.
-    """
+    """Create PyTorch DataLoaders."""
     if batch_size is None:
         batch_size = config.batch_size
 
-    # Try to load tokenizer from bert_encoder_path or fallback to default model
-    try:
-        if hasattr(config, "bert_encoder_path") and config.bert_encoder_path.exists():
-            tokenizer = AutoTokenizer.from_pretrained(str(config.bert_encoder_path))
-        else:
-            # Fallback to same model used in BERTClassifier
-            tokenizer = AutoTokenizer.from_pretrained(
-                "sentence-transformers/all-MiniLM-L6-v2"
-            )
-    except Exception as e:
-        logger.warning("Failed to load tokenizer from path: %s", str(e))
-        tokenizer = AutoTokenizer.from_pretrained(
-            "sentence-transformers/all-MiniLM-L6-v2"
+    # More descriptive error for missing bert_encoder_path
+    if not hasattr(config, "bert_encoder_path"):
+        raise ValueError(
+            "bert_encoder_path must be specified in config. "
+            "This should be set by ModelConfig or its subclasses."
         )
+
+    encoder_path = Path(config.bert_encoder_path)
+    if not encoder_path.exists():
+        raise ValueError(
+            f"BERT encoder not found at: {encoder_path}. "
+            f"Please ensure it exists in the correct location."
+        )
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(encoder_path),
+            local_files_only=True,
+            trust_remote_code=False,  # Additional safety measure
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to load local tokenizer: {str(e)}") from e
 
     # Create datasets with max_seq_len from config
     if isinstance(texts[0], list):  # Multiple sets (train/val)

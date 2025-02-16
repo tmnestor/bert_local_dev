@@ -47,6 +47,14 @@ def validate_checkpoint(checkpoint: Dict[str, Any]) -> None:
         if not isinstance(checkpoint[field], expected_type):
             raise TypeError(f"Field {field} has wrong type: {type(checkpoint[field])}")
 
+    # Add bert_encoder_path validation
+    if "bert_encoder_path" not in checkpoint:
+        raise ValueError("Missing required field: bert_encoder_path")
+
+    bert_path = Path(checkpoint["bert_encoder_path"])
+    if not bert_path.exists():
+        raise FileNotFoundError(f"BERT encoder not found at: {bert_path}")
+
 
 def safe_load_checkpoint(
     path: Path, device: str = "cpu", weights_only: bool = False, strict: bool = True
@@ -104,6 +112,7 @@ def save_checkpoint(
     model_state: Dict[str, torch.Tensor],
     config: Dict[str, Any],
     num_classes: int,
+    bert_encoder_path: str,  # Add this parameter
     **kwargs,
 ) -> None:
     """Save model checkpoint with standardized format."""
@@ -111,6 +120,7 @@ def save_checkpoint(
         "model_state_dict": model_state,
         "config": config,
         "num_classes": num_classes,
+        "bert_encoder_path": bert_encoder_path,  # Add this line
         **kwargs,
     }
 
