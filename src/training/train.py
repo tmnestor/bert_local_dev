@@ -34,6 +34,9 @@ from pathlib import Path
 from typing import Optional
 import torch
 from transformers import get_linear_schedule_with_warmup
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 from ..config.configuration import (
     ModelConfig,
@@ -47,7 +50,10 @@ from ..data_utils import load_and_preprocess_data, create_dataloaders
 from ..utils.train_utils import initialize_progress_bars
 from ..utils.logging_manager import get_logger, setup_logging
 from ..tuning.optimize import create_optimizer
-from ..utils.model_loading import save_checkpoint  # Add this import
+from ..utils.model_loading import (
+    save_checkpoint,
+    ModelCheckpoint,
+)  # Import ModelCheckpoint
 
 logger = get_logger(__name__)  # Change to get_logger
 
@@ -144,34 +150,27 @@ def save_best_model(
     model: BERTClassifier, config: ModelConfig, score: float, path: Path
 ) -> None:
     """Save best model checkpoint."""
-    checkpoint = {
-        "model_state_dict": model.state_dict(),
-        "config": {
+
+    checkpoint = ModelCheckpoint(
+        model_state_dict=model.state_dict(),
+        config={
             "bert_hidden_size": CLASSIFIER_DEFAULTS["bert_hidden_size"],
             "hidden_dims": CLASSIFIER_DEFAULTS["hidden_dims"],
             "dropout_rate": CLASSIFIER_DEFAULTS["dropout_rate"],
             "activation": CLASSIFIER_DEFAULTS["activation"],
         },
-        "num_classes": config.num_classes,
-        "metric_value": score,
-        "hyperparameters": {
+        num_classes=config.num_classes,
+        bert_encoder_path=str(config.bert_encoder_path),
+        metric_value=score,
+        hyperparameters={
             "optimizer": CONFIG["optimizer"]["optimizer_choice"],
             "lr": CONFIG["optimizer"]["lr"],
             "weight_decay": CONFIG["optimizer"]["weight_decay"],
         },
-        "bert_encoder_path": str(config.bert_encoder_path),  # Add this line
-    }
+    )
 
     try:
-        save_checkpoint(
-            path=path,
-            model_state=checkpoint["model_state_dict"],
-            config=checkpoint["config"],
-            num_classes=checkpoint["num_classes"],
-            metric_value=checkpoint["metric_value"],
-            hyperparameters=checkpoint["hyperparameters"],
-            bert_encoder_path=checkpoint["bert_encoder_path"],  # Add this line
-        )
+        save_checkpoint(path=path, checkpoint=checkpoint)
         logger.info("Saved best model to: %s", path)
     except Exception as e:
         logger.error("Failed to save model: %s", str(e))
@@ -341,6 +340,10 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
         len(train_dataloader),  # Pass batch count for batch progress bar
     )
 
+    # Initialize lists to store training and validation metrics
+    training_metrics = []
+    validation_metrics = []
+
     # Training loop
     best_score = 0.0
 
@@ -353,10 +356,50 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
             )
             score, metrics = trainer.evaluate(val_dataloader)
 
+            # Calculate training F1 score
+            train_score, train_metrics = trainer.evaluate(train_dataloader)
+
+            # Calculate validation loss
+            val_loss = trainer.train_epoch(val_dataloader, optimizer, scheduler)
+
             epoch_pbar.set_postfix(
                 {"loss": f"{loss:.4f}", f"val_{model_config.metric}": f"{score:.4f}"}
             )
             epoch_pbar.update(1)
+
+            # Store training and validation metrics
+            training_metrics.append(
+                {
+                    "epoch": epoch + 1,
+                    "metric": "loss",
+                    "value": loss,
+                    "dataset": "training",
+                }
+            )
+            training_metrics.append(
+                {
+                    "epoch": epoch + 1,
+                    "metric": model_config.metric,
+                    "value": train_score,
+                    "dataset": "training",
+                }
+            )
+            validation_metrics.append(
+                {
+                    "epoch": epoch + 1,
+                    "metric": model_config.metric,
+                    "value": score,
+                    "dataset": "validation",
+                }
+            )
+            validation_metrics.append(
+                {
+                    "epoch": epoch + 1,
+                    "metric": "loss",
+                    "value": val_loss,
+                    "dataset": "validation",
+                }
+            )
 
             if score > best_score:
                 best_score = score
@@ -385,6 +428,11 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
             )
             logger.info("Final model saved to: %s", model_config.model_save_path)
 
+    # Create learning curves plot
+    plot_learning_curves(
+        training_metrics, validation_metrics, model_config.evaluation_dir
+    )
+
     logger.info("\nTraining completed. Best %s: %.4f", model_config.metric, best_score)
     if model_config.verbosity > 1:  # Add detailed path logging for debug level
         logger.info("Model saved to: %s", model_config.model_save_path.absolute())
@@ -393,6 +441,44 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
             "Model file size: %.2f MB",
             model_config.model_save_path.stat().st_size / (1024 * 1024),
         )
+
+
+def plot_learning_curves(training_metrics, validation_metrics, output_dir):
+    """Plot learning curves using Seaborn."""
+    # Combine training and validation metrics into a single DataFrame
+    all_metrics = training_metrics + validation_metrics
+    metrics_df = pd.DataFrame(all_metrics)
+
+    # Use Seaborn to create the learning curves plot
+    plt.figure(figsize=(12, 6))
+    sns.set(style="darkgrid")
+    sns.lineplot(
+        data=metrics_df,
+        x="epoch",
+        y="value",
+        hue="metric",
+        style="dataset",
+        markers=True,
+        dashes=False,
+    )
+
+    # Customize the plot
+    plt.title("Learning Curves", fontsize=16)
+    plt.xlabel("Epoch", fontsize=12)
+    plt.ylabel("Metric Value", fontsize=12)
+    plt.legend(title="Legend", loc="best")
+
+    # Set x-ticks to integer values
+    plt.xticks(range(1, len(set(metrics_df["epoch"])) + 1))
+
+    plt.tight_layout()
+
+    # Save the plot
+    plot_path = output_dir / "learning_curves.png"
+    plt.savefig(plot_path)
+    plt.close()
+
+    logger.info(f"Learning curves plot saved to: {plot_path}")
 
 
 def parse_args() -> argparse.ArgumentParser:
@@ -458,6 +544,10 @@ if __name__ == "__main__":
     cli_args = parse_args()
     config = ModelConfig.from_args(cli_args)
     setup_logging(config)
+
+    # Set default tensor type to MPS if available
+    if config.device == "mps" and torch.backends.mps.is_available():
+        torch.set_default_tensor_type(torch.FloatTensor)
 
     # Always use configuration from config.yml
     train_model(config)

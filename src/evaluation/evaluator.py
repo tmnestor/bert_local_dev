@@ -52,13 +52,16 @@ from wordcloud import WordCloud
 
 from src.config.configuration import CONFIG, EvaluationConfig, ModelConfig
 from src.data_utils import create_dataloaders, load_and_preprocess_data
-from src.models.model import BERTClassifier
+from src.models.model import BERTClassifier  # Add this import
 from src.utils.logging_manager import (
     get_logger,
     setup_logging,
 )  # Change from setup_logger
 from src.utils.metrics import calculate_metrics
-from src.utils.model_loading import safe_load_checkpoint
+from src.utils.model_loading import (
+    safe_load_checkpoint,
+    load_model_checkpoint,
+)  # Add this import
 from ..utils.model_info import display_model_info  # Add import
 
 # Configure matplotlib once at module level
@@ -114,7 +117,14 @@ class ModelEvaluator:
 
     DEFAULT_METRICS = ["accuracy", "f1", "precision", "recall"]
 
-    def __init__(self, model_path: Path, config: Union[EvaluationConfig, ModelConfig]):
+    def __init__(
+        self,
+        model_path: Path,
+        config: Union[EvaluationConfig, ModelConfig],
+        num_classes: int,
+        metric_value: float,
+        model: BERTClassifier,
+    ):
         """Initialize the evaluator.
 
         Args:
@@ -125,7 +135,9 @@ class ModelEvaluator:
         self.config = config
         self.device = torch.device(config.device)
         self.metrics = getattr(config, "metrics", self.DEFAULT_METRICS)
-        self.model = self._load_model()
+        self.model = model
+        self.num_classes = num_classes
+        self.metric_value = metric_value
 
     def _calculate_layer_sizes(
         self, input_size: int, hidden_dims: List[int], num_classes: int
@@ -462,8 +474,8 @@ class ModelEvaluator:
                 self.model.eval()
                 with torch.no_grad():
                     for batch in fold_dataloader:
-                        input_ids = batch["input_ids"].to(self.device)
-                        attention_mask = batch["attention_mask"].to(self.device)
+                        input_ids = batch["input_ids"]
+                        attention_mask = batch["attention_mask"]
 
                         outputs = self.model(
                             input_ids=input_ids, attention_mask=attention_mask
@@ -568,25 +580,38 @@ class ModelEvaluator:
             return final_metrics, results_df
 
     @classmethod
-    def from_config(cls, config: EvaluationConfig) -> "ModelEvaluator":
+    def from_config(cls, config: ModelConfig) -> "ModelEvaluator":
         """Create evaluator instance from configuration."""
-        model_files = list(config.best_trials_dir.glob("best_model_*.pt"))
-        if model_files:
-            logger.info("\nFound model files:")
-            for f in model_files:
-                try:
-                    # Use safe loading for scanning
-                    checkpoint = safe_load_checkpoint(f, "cpu", strict=False)
-                    logger.info(
-                        "  %s (score: %.4f)",
-                        f.name,
-                        checkpoint.get("metric_value", float("nan")),
-                    )
-                except (RuntimeError, ValueError, FileNotFoundError, KeyError) as e:
-                    logger.warning("  Failed to load %s: %s", f.name, e)
+        # Load model checkpoint
+        checkpoint = load_model_checkpoint(
+            config.best_model, default_root=config.output_root
+        )
 
-        logger.info("\nSelected model: %s", config.best_model)
-        return cls(model_path=config.best_model, config=config)
+        # Create model instance from checkpoint
+        model = BERTClassifier.from_checkpoint(
+            checkpoint=checkpoint.__dict__,  # Pass the dictionary
+            num_classes=checkpoint.num_classes,
+            device=config.device,
+        )
+
+        logger.info("Successfully loaded model")
+
+        # Log model architecture details
+        logger.info("\nModel Architecture:")
+        logger.info("=" * 50)
+        logger.info("BERT hidden size: %d", model.bert_hidden_size)
+        logger.info("Hidden layers: %s", model.classifier_config["hidden_dim"])
+        logger.info("Activation: %s", model.classifier_config.get("activation", "gelu"))
+        logger.info("Dropout: %.3f", model.classifier_config.get("dropout_rate", 0.1))
+        logger.info("=" * 50)
+
+        return cls(
+            model_path=config.best_model,
+            config=config,
+            model=model,
+            num_classes=checkpoint.num_classes,
+            metric_value=checkpoint.metric_value or float("nan"),  # Access directly
+        )
 
     @classmethod
     def add_model_args(cls, parser: argparse.ArgumentParser) -> None:

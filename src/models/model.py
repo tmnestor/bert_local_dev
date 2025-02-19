@@ -146,6 +146,12 @@ class BERTClassifier(nn.Module):
 
         model.to(device)
         model.eval()
+
+        # Move the entire BERT model to the specified device
+        model.bert.to(device)
+        # Move the classifier to the specified device
+        model.classifier.to(device)
+
         return model
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
@@ -227,6 +233,9 @@ class BERTClassifier(nn.Module):
                 raise RuntimeError(
                     "BERT model not initialized. Load from checkpoint first."
                 )
+
+            input_ids = input_ids.to(self.bert.device)
+            attention_mask = attention_mask.to(self.bert.device)
 
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
             # Use mean pooling

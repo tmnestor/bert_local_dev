@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+import torch
 
 from ..config.configuration import ModelConfig  # Changed from config to configuration
 from .dataset import TextClassificationDataset
@@ -121,20 +122,42 @@ def create_dataloaders(
     except Exception as e:
         raise RuntimeError(f"Failed to load local tokenizer: {str(e)}") from e
 
-    # Create datasets with max_seq_len from config
-    if isinstance(texts[0], list):  # Multiple sets (train/val)
+    # Decide on num_workers: force 0 on mps
+    num_workers = 0 if config.device.lower() == "mps" else 4
+
+    def worker_init_fn(worker_id):
+        torch.manual_seed(torch.initial_seed() % 2**32)
+
+    if isinstance(texts[0], list):  # Train/val mode
         train_dataset = TextClassificationDataset(
             texts[0], labels[0], tokenizer, config.max_seq_len
         )
         val_dataset = TextClassificationDataset(
             texts[1], labels[1], tokenizer, config.max_seq_len
         )
+        generator = torch.Generator(device="cpu")  # Use CPU for generator
         return (
-            DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
-            DataLoader(val_dataset, batch_size=batch_size),
+            DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                generator=generator,
+                worker_init_fn=worker_init_fn,
+                num_workers=num_workers,
+            ),
+            DataLoader(
+                val_dataset,
+                batch_size=batch_size,
+                generator=generator,
+                worker_init_fn=worker_init_fn,
+                num_workers=num_workers,
+            ),
         )
-    else:  # Single set (test)
+    else:  # Single set mode
         dataset = TextClassificationDataset(
             texts, labels, tokenizer, config.max_seq_len
         )
-        return DataLoader(dataset, batch_size=batch_size)
+        generator = torch.Generator(device="cpu")
+        return DataLoader(
+            dataset, batch_size=batch_size, generator=generator, num_workers=num_workers
+        )

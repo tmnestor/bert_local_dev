@@ -32,12 +32,13 @@ model:
   max_seq_len: 64
   batch_size: 32
   num_epochs: 10
-  device: cpu
+  device: mps
   metric: f1
   metrics: ["accuracy", "f1", "precision", "recall"]
 
 # Classifier architecture defaults
 classifier:
+  # bert_hidden_size: 768
   bert_hidden_size: 384
   hidden_dims: [220]  # These will be the hidden layer sizes
   dropout_rate: 0.4396
@@ -55,3 +56,14 @@ optimizer:
   nesterov: true                                  # SGD only
   betas: (0.6556849067584876, 0.9989954180359887) # AdamW only
   eps: 2.9849547332547365e-07                     # AdamW only
+
+# Sampler configuration
+sampler:
+  name: tpe
+  kwargs:
+    n_startup_trials: 15
+    n_ei_candidates: 30
+
+# Pruner configuration
+pruner:
+  name: median

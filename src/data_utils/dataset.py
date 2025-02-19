@@ -30,6 +30,9 @@ class TextClassificationDataset(Dataset):
         self.labels = labels
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
+        self.device = torch.device(
+            "mps" if torch.backends.mps.is_available() else "cpu"
+        )  # Set device
 
     def __len__(self) -> int:
         return len(self.texts)
@@ -51,11 +54,13 @@ class TextClassificationDataset(Dataset):
             return_tensors="pt",
         )
 
-        # Change 'labels' to 'label' to match CrossEntropyLoss expectation
+        # Return tensors on CPU; remove .to(self.device)
+        input_ids = encoding["input_ids"].squeeze()
+        attention_mask = encoding["attention_mask"].squeeze()
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+
         return {
-            "input_ids": encoding["input_ids"][0],
-            "attention_mask": encoding["attention_mask"][0],
-            "label": torch.tensor(
-                self.labels[idx], dtype=torch.long
-            ),  # Changed from 'labels' to 'label'
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "label": label,
         }

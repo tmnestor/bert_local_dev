@@ -6,17 +6,23 @@ from typing import Dict, Any, Optional, Union
 
 import torch
 import pickle
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_SCHEMA = {
-    "required": {"model_state_dict": dict, "config": dict, "num_classes": int},
-    "optional": {
-        "metric_value": float,
-        "hyperparameters": dict,
-        "optimizer_state_dict": dict,
-    },
-}
+
+@dataclass
+class ModelCheckpoint:
+    """Standardized structure for model checkpoints."""
+
+    model_state_dict: Dict[str, torch.Tensor]
+    config: Dict[str, Any]
+    num_classes: int
+    bert_encoder_path: str
+    metric_value: Optional[float] = None
+    hyperparameters: Optional[Dict[str, Any]] = None
+    optimizer_state_dict: Optional[Dict[str, Any]] = None
+    training_details: Optional[Dict[str, Any]] = None
 
 
 def add_safe_globals():
@@ -40,16 +46,24 @@ def add_safe_globals():
 
 def validate_checkpoint(checkpoint: Dict[str, Any]) -> None:
     """Validate checkpoint against schema."""
-    # Check required fields
-    for field, expected_type in CHECKPOINT_SCHEMA["required"].items():
-        if field not in checkpoint:
-            raise ValueError(f"Missing required field: {field}")
-        if not isinstance(checkpoint[field], expected_type):
-            raise TypeError(f"Field {field} has wrong type: {type(checkpoint[field])}")
+    required_keys = [
+        "model_state_dict",
+        "config",
+        "num_classes",
+        "bert_encoder_path",
+    ]  # bert_encoder_path is now required
+    for key in required_keys:
+        if key not in checkpoint:
+            raise ValueError(f"Missing required field: {key}")
 
-    # Add bert_encoder_path validation
-    if "bert_encoder_path" not in checkpoint:
-        raise ValueError("Missing required field: bert_encoder_path")
+    if not isinstance(checkpoint["model_state_dict"], dict):
+        raise TypeError("model_state_dict must be a dict")
+    if not isinstance(checkpoint["config"], dict):
+        raise TypeError("config must be a dict")
+    if not isinstance(checkpoint["num_classes"], int):
+        raise TypeError("num_classes must be an int")
+    if not isinstance(checkpoint["bert_encoder_path"], str):
+        raise TypeError("bert_encoder_path must be a string")
 
     bert_path = Path(checkpoint["bert_encoder_path"])
     if not bert_path.exists():
@@ -58,7 +72,7 @@ def validate_checkpoint(checkpoint: Dict[str, Any]) -> None:
 
 def safe_load_checkpoint(
     path: Path, device: str = "cpu", weights_only: bool = False, strict: bool = True
-) -> Dict[str, Any]:
+) -> ModelCheckpoint:
     """Safely load model checkpoint with error handling.
 
     Args:
@@ -68,10 +82,13 @@ def safe_load_checkpoint(
         strict: Whether to strictly enforce that the keys match
 
     Returns:
-        dict: Loaded checkpoint data
+        ModelCheckpoint: Loaded checkpoint data
 
     Raises:
+        FileNotFoundError: If checkpoint is not found
         RuntimeError: If loading fails
+        TypeError: If checkpoint is not a dictionary
+        KeyError: If checkpoint is missing required keys
     """
     try:
         # Ensure path exists
@@ -94,41 +111,40 @@ def safe_load_checkpoint(
         if not isinstance(checkpoint, dict):
             raise TypeError(f"Expected checkpoint to be dict, got {type(checkpoint)}")
 
-        required_keys = ["model_state_dict", "config"]
-        if strict and not all(k in checkpoint for k in required_keys):
-            raise KeyError(f"Checkpoint missing required keys: {required_keys}")
-
         validate_checkpoint(checkpoint)
 
-        logger.info(f"Successfully loaded checkpoint from {path}")
-        return checkpoint
+        # Create ModelCheckpoint instance
+        checkpoint_data = ModelCheckpoint(
+            model_state_dict=checkpoint["model_state_dict"],
+            config=checkpoint["config"],
+            num_classes=checkpoint["num_classes"],
+            bert_encoder_path=checkpoint["bert_encoder_path"],
+            metric_value=checkpoint.get("metric_value"),
+            hyperparameters=checkpoint.get("hyperparameters"),
+            optimizer_state_dict=checkpoint.get("optimizer_state_dict"),
+            training_details=checkpoint.get("training_details"),
+        )
 
+        logger.info(f"Successfully loaded checkpoint from {path}")
+        return checkpoint_data
+
+    except FileNotFoundError as e:
+        raise e
+    except TypeError as e:
+        raise TypeError(f"Invalid checkpoint format: {str(e)}") from e
+    except KeyError as e:
+        raise KeyError(f"Missing key in checkpoint: {str(e)}") from e
     except Exception as e:
         raise RuntimeError(f"Failed to load checkpoint {path}: {str(e)}") from e
 
 
-def save_checkpoint(
-    path: Path,
-    model_state: Dict[str, torch.Tensor],
-    config: Dict[str, Any],
-    num_classes: int,
-    bert_encoder_path: str,  # Add this parameter
-    **kwargs,
-) -> None:
+def save_checkpoint(path: Path, checkpoint: ModelCheckpoint) -> None:
     """Save model checkpoint with standardized format."""
-    checkpoint = {
-        "model_state_dict": model_state,
-        "config": config,
-        "num_classes": num_classes,
-        "bert_encoder_path": bert_encoder_path,  # Add this line
-        **kwargs,
-    }
-
-    # Validate before saving
-    validate_checkpoint(checkpoint)
-
     try:
-        torch.save(checkpoint, path)
+        # Validate before saving
+        validate_checkpoint(checkpoint.__dict__)
+
+        torch.save(checkpoint.__dict__, path)
         logger.info("Saved checkpoint to: %s", path)
     except Exception as e:
         raise RuntimeError(f"Failed to save checkpoint: {str(e)}") from e
@@ -177,7 +193,7 @@ def verify_state_dict(
 
 def load_model_checkpoint(
     checkpoint_path: Union[str, Path], default_root: Optional[Path] = None
-) -> Dict:
+) -> ModelCheckpoint:
     """Load model checkpoint with flexible path resolution.
 
     Args:
@@ -185,7 +201,7 @@ def load_model_checkpoint(
         default_root: Default output root directory containing best_trials
 
     Returns:
-        Dict containing model checkpoint data
+        ModelCheckpoint: Loaded checkpoint data
 
     Raises:
         FileNotFoundError: If checkpoint cannot be found
@@ -212,17 +228,11 @@ def load_model_checkpoint(
             raise ValueError("If using relative path, default_root must be provided")
 
     try:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
-
-        # Validate checkpoint contents
-        required_keys = ["model_state_dict", "config"]
-        missing_keys = [key for key in required_keys if key not in checkpoint]
-        if missing_keys:
-            raise ValueError(f"Checkpoint missing required keys: {missing_keys}")
+        checkpoint = safe_load_checkpoint(checkpoint_path)
 
         logger.info("Successfully loaded checkpoint: %s", checkpoint_path.name)
-        if "training_details" in checkpoint:
-            details = checkpoint["training_details"]
+        if checkpoint.training_details:
+            details = checkpoint.training_details
             logger.debug(
                 "Model info - Study: %s, Trial: %d, Score: %.4f",
                 details.get("study_name", "unknown"),

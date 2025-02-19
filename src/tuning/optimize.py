@@ -39,14 +39,14 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterator, List, Optional, Tuple
 
-
+import logging  # Add this import
 import numpy as np
 import psutil
 import optuna
 import torch
 from optuna._experimental import ExperimentalWarning
-from optuna.pruners import HyperbandPruner
-from optuna.samplers import TPESampler
+from optuna.pruners import HyperbandPruner, MedianPruner, NopPruner
+from optuna.samplers import TPESampler, RandomSampler, CmaEsSampler, QMCSampler
 from sklearn.model_selection import train_test_split
 from torch import optim
 from tqdm.auto import tqdm
@@ -65,6 +65,10 @@ from ..utils.logging_manager import (
     setup_logging,
 )  # Change from setup_logger
 from ..utils.train_utils import log_separator
+from ..utils.model_loading import (
+    save_checkpoint,
+    ModelCheckpoint,
+)  # Import ModelCheckpoint
 
 # Silence specific Optuna warnings
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
@@ -173,36 +177,12 @@ def create_optimizer(
     Raises:
         ValueError: If optimizer_name is not one of the supported optimizers.
     """
-    # Map common parameter names to optimizer-specific names
-    param_mapping = {
-        "lr": "lr",  # Changed from learning_rate
-        "weight_decay": "weight_decay",
-        "momentum": "momentum",
-        "beta1": "betas[0]",
-        "beta2": "betas[1]",
-    }
-
-    # Convert parameters using mapping
-    optimizer_kwargs = {}
-    for key, value in kwargs.items():
-        if key in param_mapping:
-            mapped_key = param_mapping[key]
-            if "[" in mapped_key:  # Handle nested params like betas
-                base_key, idx = mapped_key.split("[")
-                idx = int(idx.rstrip("]"))
-                if base_key not in optimizer_kwargs:
-                    optimizer_kwargs[base_key] = [0.9, 0.999]  # Default AdamW betas
-                optimizer_kwargs[base_key][idx] = value
-            else:
-                optimizer_kwargs[mapped_key] = value
-        else:
-            optimizer_kwargs[key] = value
 
     optimizers = {
-        "adam": optim.Adam,
-        "adamw": optim.AdamW,
-        "sgd": optim.SGD,
-        "rmsprop": optim.RMSprop,
+        "adam": {"class": optim.Adam, "params": {}},
+        "adamw": {"class": optim.AdamW, "params": {}},
+        "sgd": {"class": optim.SGD, "params": {}},
+        "rmsprop": {"class": optim.RMSprop, "params": {}},
     }
 
     if optimizer_name.lower() not in optimizers:
@@ -211,13 +191,56 @@ def create_optimizer(
             f"Available optimizers: {list(optimizers.keys())}"
         )
 
-    return optimizers[optimizer_name.lower()](model_params, **optimizer_kwargs)
+    optimizer_info = optimizers[optimizer_name.lower()]
+    optimizer_class = optimizer_info["class"]
+    optimizer_params = optimizer_info["params"].copy()
+
+    # Add optimizer-specific parameters from kwargs
+    optimizer_params.update(kwargs)
+
+    return optimizer_class(model_params, **optimizer_params)
+
+
+def get_optimizer_config(trial, optimizer_name, lr):
+    """Get optimizer-specific configuration."""
+    optimizer_config = {
+        "lr": lr,
+        "weight_decay": trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True),
+    }
+
+    if optimizer_name == "sgd":
+        optimizer_config.update(
+            {
+                "momentum": trial.suggest_float("momentum", 0.0, 0.99),
+                "nesterov": trial.suggest_categorical("nesterov", [True, False]),
+            }
+        )
+    elif optimizer_name == "adamw":
+        optimizer_config.update(
+            {
+                "betas": (
+                    trial.suggest_float("beta1", 0.5, 0.9999),
+                    trial.suggest_float("beta2", 0.9, 0.9999),
+                ),
+                "eps": trial.suggest_float("eps", 1e-8, 1e-6, log=True),
+            }
+        )
+    elif optimizer_name == "rmsprop":
+        optimizer_config.update(
+            {
+                "momentum": trial.suggest_float("momentum", 0.0, 0.99),
+                "alpha": trial.suggest_float("alpha", 0.8, 0.99),
+            }
+        )
+
+    return optimizer_config
 
 
 def _create_study(
     name: str,
     storage: Optional[str] = None,
-    sampler_type: str = "tpe",
+    sampler_config: Dict[str, Any] = None,
+    pruner_config: Dict[str, Any] = None,
     random_seed: Optional[int] = None,
 ) -> optuna.Study:
     """Create an Optuna study for hyperparameter optimization."""
@@ -227,25 +250,34 @@ def _create_study(
     if random_seed is None:
         random_seed = int(time.time())
 
-    sampler = {
-        "tpe": TPESampler(
-            n_startup_trials=10,
-            n_ei_candidates=24,
-            multivariate=True,
-            warn_independent_sampling=False,  # Suppress warnings
-            seed=random_seed,
-        ),
-        "random": optuna.samplers.RandomSampler(seed=random_seed),
-        "cmaes": optuna.samplers.CmaEsSampler(n_startup_trials=10, seed=random_seed),
-        "qmc": optuna.samplers.QMCSampler(qmc_type="sobol", seed=random_seed),
-    }.get(sampler_type, TPESampler(seed=random_seed))
+    # Sampler configuration
+    sampler_type = sampler_config.get("name", "tpe") if sampler_config else "tpe"
+    sampler_kwargs = sampler_config.get("kwargs", {}) if sampler_config else {}
+    sampler_kwargs["seed"] = random_seed
 
-    # Adjust pruner to be less aggressive
-    pruner = HyperbandPruner(
-        min_resource=3,  # Increased from 1
-        max_resource=15,  # Increased from 10
-        reduction_factor=2,  # Decreased from 3
+    # Remove n_startup_trials as it's not valid for RandomSampler
+    sampler_kwargs.pop("n_startup_trials", None)
+    # Remove n_ei_candidates as it's not valid for RandomSampler
+    sampler_kwargs.pop("n_ei_candidates", None)
+
+    sampler = {
+        "tpe": TPESampler(**sampler_kwargs),
+        "random": RandomSampler(**sampler_kwargs),
+        "cmaes": CmaEsSampler(**sampler_kwargs),
+        "qmc": QMCSampler(qmc_type="sobol", **sampler_kwargs),
+    }.get(sampler_type, TPESampler(**sampler_kwargs))
+
+    # Pruner configuration
+    pruner_type = (
+        pruner_config.get("name", "hyperband") if pruner_config else "hyperband"
     )
+    pruner_kwargs = pruner_config.get("kwargs", {}) if pruner_config else {}
+
+    pruner = {
+        "hyperband": HyperbandPruner(**pruner_kwargs),
+        "median": MedianPruner(),  # Remove pruner_kwargs
+        "none": NopPruner(),
+    }.get(pruner_type, HyperbandPruner(**pruner_kwargs))
 
     return optuna.create_study(
         study_name=name,
@@ -306,8 +338,14 @@ def run_optimization(
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}",
     )
 
+    # Get pruner and sampler settings from config
+    pruner_config = CONFIG.get("pruner", {})
+    sampler_config = CONFIG.get("sampler", {})
+
     # Create study and run optimization
-    study = _create_study(experiment_name, storage, model_config.sampler, random_seed)
+    study = _create_study(
+        experiment_name, storage, sampler_config, pruner_config, random_seed
+    )
     study.set_user_attr("best_value", 0.0)
     global_best_info = {
         "score": float("-inf"),
@@ -579,41 +617,6 @@ def get_trial_config(
     return batch_size, classifier_config, optimizer_name, optimizer_config
 
 
-def get_optimizer_config(trial, optimizer_name, lr):  # Changed parameter name
-    """Get optimizer-specific configuration."""
-    optimizer_config = {
-        "lr": lr,  # Changed from learning_rate
-        "weight_decay": trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True),
-    }
-
-    if optimizer_name == "sgd":
-        optimizer_config.update(
-            {
-                "momentum": trial.suggest_float("momentum", 0.0, 0.99),
-                "nesterov": trial.suggest_categorical("nesterov", [True, False]),
-            }
-        )
-    elif optimizer_name == "adamw":
-        optimizer_config.update(
-            {
-                "betas": (
-                    trial.suggest_float("beta1", 0.5, 0.9999),
-                    trial.suggest_float("beta2", 0.9, 0.9999),
-                ),
-                "eps": trial.suggest_float("eps", 1e-8, 1e-6, log=True),
-            }
-        )
-    elif optimizer_name == "rmsprop":
-        optimizer_config.update(
-            {
-                "momentum": trial.suggest_float("momentum", 0.0, 0.99),
-                "alpha": trial.suggest_float("alpha", 0.8, 0.99),
-            }
-        )
-
-    return optimizer_config
-
-
 def log_current_best(
     best_info: Dict[str, Any], study_name: str, model_config: ModelConfig
 ) -> None:
@@ -806,6 +809,11 @@ def objective(
     trial_best_state = None  # Initialize at the top with other variables
 
     try:
+        # Get the logger for the model
+        model_logger = logging.getLogger("src.models.model")
+        original_level = model_logger.level  # Save original level
+        model_logger.setLevel(logging.WARNING)  # Suppress INFO messages
+
         batch_size, classifier_config, optimizer_name, optimizer_config = (
             get_trial_config(trial, model_config)
         )
@@ -925,6 +933,9 @@ def objective(
             trial_pbar.update(1)
         logger.error("Trial %d failed: %s", trial.number, str(e), exc_info=True)
         raise
+    finally:
+        # Restore original logging level
+        model_logger.setLevel(original_level)
 
 
 def save_trial_callback(
@@ -966,20 +977,18 @@ def save_trial_callback(
             }
 
             # Save everything including bert_encoder_path
-            best_trial_info = {
-                "model_state_dict": model_info.get("model_state"),
-                "config": model_info.get("config", {}),
-                "training_details": training_details,
-                "hyperparameters": trial.params,
-                "value": trial.value,
-                "bert_encoder_path": str(
-                    model_config.bert_encoder_path
-                ),  # Add this line
-                "num_classes": model_config.num_classes,  # Also add this for completeness
-            }
+            best_trial_info = ModelCheckpoint(
+                model_state_dict=model_info.get("model_state"),
+                config=model_info.get("config", {}),
+                num_classes=model_config.num_classes,
+                bert_encoder_path=str(model_config.bert_encoder_path),
+                metric_value=trial.value,
+                hyperparameters=trial.params,
+                training_details=training_details,
+            )
 
             torch.save(
-                best_trial_info,
+                best_trial_info.__dict__,
                 model_config.best_trials_dir / f"best_trial_{trial_study_name}.pt",
             )
 

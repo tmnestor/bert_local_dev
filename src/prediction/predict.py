@@ -27,6 +27,8 @@ from ..evaluation.evaluator import ModelEvaluator, suppress_evaluation_warnings
 from ..utils.logging_manager import get_logger, setup_logging
 from ..utils.model_info import display_model_info  # Add import
 from dataclasses import dataclass, field
+from ..utils.model_loading import load_model_checkpoint  # Add this import
+from ..models.model import BERTClassifier  # Add this import
 
 logger = get_logger(__name__)
 
@@ -191,7 +193,34 @@ class Predictor(ModelEvaluator):
             if not config.bert_encoder_path.is_absolute():
                 config.bert_encoder_path = config.output_root / config.bert_encoder_path
 
-        return cls(model_path=config.best_model, config=config)
+        # Load model checkpoint
+        checkpoint = load_model_checkpoint(
+            config.best_model, default_root=config.output_root
+        )
+
+        # Create model instance from checkpoint
+        model = BERTClassifier.from_checkpoint(
+            checkpoint=checkpoint.__dict__,
+            num_classes=checkpoint.num_classes,
+            device=config.device,
+        )
+
+        # Log model architecture
+        logger.info("\nModel Architecture:")
+        logger.info("=" * 50)
+        logger.info("BERT hidden size: %d", model.bert_hidden_size)
+        logger.info("Hidden layers: %s", model.classifier_config["hidden_dim"])
+        logger.info("Activation: %s", model.classifier_config.get("activation", "gelu"))
+        logger.info("Dropout: %.3f", model.classifier_config.get("dropout_rate", 0.1))
+        logger.info("=" * 50)
+
+        return cls(
+            model_path=config.best_model,
+            config=config,
+            model=model,  # Pass the model
+            num_classes=checkpoint.num_classes,  # Pass num_classes
+            metric_value=checkpoint.metric_value or float("nan"),  # Pass metric_value
+        )
 
     def predict(
         self, save_predictions: bool = True, output_file: str = "predictions.csv"
@@ -219,8 +248,8 @@ class Predictor(ModelEvaluator):
             self.model.eval()
             with torch.no_grad():
                 for batch in tqdm(test_dataloader, desc="Generating predictions"):
-                    input_ids = batch["input_ids"].to(self.device)
-                    attention_mask = batch["attention_mask"].to(self.device)
+                    input_ids = batch["input_ids"]
+                    attention_mask = batch["attention_mask"]
 
                     outputs = self.model(
                         input_ids=input_ids, attention_mask=attention_mask

@@ -101,11 +101,16 @@ class Trainer:
             self.model.train()
             for batch in train_dataloader:
                 optimizer.zero_grad()
+                input_ids = batch["input_ids"]
+                attention_mask = batch["attention_mask"]
+                labels = batch["label"]
+
+                # Move data to the correct device
                 outputs = self.model(
-                    input_ids=batch["input_ids"].to(self.device),
-                    attention_mask=batch["attention_mask"].to(self.device),
+                    input_ids=input_ids.to(self.device),
+                    attention_mask=attention_mask.to(self.device),
                 )
-                loss = nn.CrossEntropyLoss()(outputs, batch["label"].to(self.device))
+                loss = nn.CrossEntropyLoss()(outputs, labels.to(self.device))
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
@@ -114,7 +119,6 @@ class Trainer:
                 if progress_bar:
                     progress_bar.update(1)
                     progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
-
         except Exception as e:
             raise TrainerError(f"Error during training: {str(e)}") from e
 
@@ -138,8 +142,8 @@ class Trainer:
             raise TrainerError("Empty evaluation dataloader")
 
         try:
-            self.model.eval()
             # Verify evaluation mode
+            self.model.eval()
             for module in self.model.modules():
                 if isinstance(module, (nn.Dropout, nn.BatchNorm1d)):
                     assert not module.training, (
@@ -147,7 +151,6 @@ class Trainer:
                     )
             predictions = []
             actual_labels = []
-
             with torch.no_grad():
                 for batch in eval_dataloader:
                     outputs = self.model(
@@ -159,15 +162,13 @@ class Trainer:
                     actual_labels.extend(batch["label"].cpu().tolist())
 
             # Calculate both metrics but return F1 as primary metric
-            accuracy = accuracy_score(actual_labels, predictions)
             if self.metric == "f1":
                 primary_score = f1_score(actual_labels, predictions, average="macro")
             else:
-                primary_score = accuracy
+                primary_score = accuracy_score(actual_labels, predictions)
 
             report = classification_report(actual_labels, predictions, zero_division=0)
-
-            return (primary_score, report)
+            return primary_score, report
         except Exception as e:
             raise TrainerError(f"Error during evaluation: {str(e)}") from e
 
@@ -207,7 +208,7 @@ class Trainer:
             TrainerError: If loading fails.
         """
         try:
-            checkpoint = torch.load(path, map_location=self.device, weights_only=True)
+            checkpoint = torch.load(path, map_location=self.device)
             self.model.load_state_dict(checkpoint["model_state_dict"])
             if optimizer is not None:
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
