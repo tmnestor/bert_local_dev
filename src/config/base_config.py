@@ -55,15 +55,18 @@ class BaseConfig:
         for field in fields(self):
             value = getattr(self, field.name)
             field_type = type_hints.get(field.name)
-            self._validate_field(field, value, field_type)
+            self._validate_field(field, value, field_type, field.name)
 
-    def _validate_field(self, field: Field, value: Any, field_type: Any) -> None:
+    def _validate_field(
+        self, field: Field, value: Any, field_type: Any, field_name: str
+    ) -> None:
         """Validates a single configuration field.
 
         Args:
             field: Field descriptor from dataclass
             value: Value to validate
             field_type: Expected type of the field
+            field_name: Name of the field being validated
 
         Raises:
             ValueError: If field validation fails
@@ -73,14 +76,18 @@ class BaseConfig:
             return
 
         if value is None and not self._is_optional(field_type):
-            raise ValueError(f"{field.name} cannot be None")
+            raise ValueError(f"{field_name} cannot be None")
 
         if isinstance(value, Path):
-            self._validate_path_field(field.name, value)
+            self._validate_path_field(field_name, value)
 
-        if hasattr(self, f"_validate_{field.name}"):
-            validator = getattr(self, f"_validate_{field.name}")
-            validator(value)
+        # Centralized validation logic
+        if field_name == "num_classes" and value is not None and value < 1:
+            raise ValueError("num_classes must be positive if specified")
+        if field_name == "max_seq_len" and value < 1:
+            raise ValueError("max_seq_len must be positive")
+        if field_name == "metrics" and not isinstance(value, list):
+            raise ValueError("metrics must be a list")
 
     def _validate_path_field(self, name: str, path: Path) -> None:
         """Validate path fields"""

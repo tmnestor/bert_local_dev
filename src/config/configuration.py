@@ -114,48 +114,108 @@ def _process_config_values(config: Dict[str, Any]) -> None:
 CONFIG = load_yaml_config()
 
 
+def resolve_path(path: Path, root_dir: Path) -> Path:
+    """Resolves a path relative to a root directory."""
+    if not path.is_absolute():
+        return root_dir / path
+    return path
+
+
 @dataclass
 class ModelConfig(BaseConfig):
-    """Strongly typed configuration for model training."""
+    """Strongly typed configuration for model training.
 
-    # Add bert_encoder_path
+    Attributes:
+        bert_encoder_path (Path): Path to the BERT encoder model.
+        bert_model_name (str): Name or path of the BERT model.
+        num_classes (Optional[int]): Number of output classes.
+        max_seq_len (int): Maximum sequence length for tokenization.
+        batch_size (int): Training batch size.
+        num_epochs (int): Number of training epochs.
+        learning_rate (float): Learning rate.
+        device (str): Device for training (cpu or cuda).
+        dropout_rate (float): Dropout rate.
+        metric (str): Evaluation metric.
+        metrics (List[str]): List of metrics to compute.
+        data_file (Path): Path to the main data file.
+        n_trials (Optional[int]): Number of optimization trials.
+        n_experiments (int): Number of optimization experiments.
+        trials_per_experiment (Optional[int]): Trials per experiment.
+        sampler (str): Sampler for Optuna.
+        output_root (Path): Root directory for all outputs.
+        verbosity (int): Verbosity level.
+    """
+
     bert_encoder_path: Path = field(
-        default_factory=lambda: Path(CONFIG["model_paths"]["bert_encoder"])
+        default_factory=lambda: Path(CONFIG["model_paths"]["bert_encoder"]),
+        metadata={"help": "Path to the BERT encoder model"},
     )
-
-    # Replace all hardcoded defaults with config.yml values
     bert_model_name: str = field(
-        default_factory=lambda: CONFIG["model"].get("bert_model_name", "./bert_encoder")
+        default_factory=lambda: CONFIG["model"].get(
+            "bert_model_name", "./bert_encoder"
+        ),
+        metadata={"help": "Name or path of the BERT model"},
     )
     num_classes: Optional[int] = field(
-        default_factory=lambda: CONFIG["classifier"].get("num_classes")
+        default_factory=lambda: CONFIG["classifier"].get("num_classes"),
+        metadata={"help": "Number of output classes"},
     )
-    max_seq_len: int = field(default_factory=lambda: CONFIG["model"]["max_seq_len"])
-    batch_size: int = field(default_factory=lambda: CONFIG["model"]["batch_size"])
-    num_epochs: int = field(default_factory=lambda: CONFIG["model"]["num_epochs"])
-    learning_rate: float = field(default_factory=lambda: CONFIG["optimizer"]["lr"])
-    device: str = field(default_factory=lambda: CONFIG["model"]["device"])
+    max_seq_len: int = field(
+        default_factory=lambda: CONFIG["model"]["max_seq_len"],
+        metadata={"help": "Maximum sequence length for tokenization"},
+    )
+    batch_size: int = field(
+        default_factory=lambda: CONFIG["model"]["batch_size"],
+        metadata={"help": "Training batch size"},
+    )
+    num_epochs: int = field(
+        default_factory=lambda: CONFIG["model"]["num_epochs"],
+        metadata={"help": "Number of training epochs"},
+    )
+    learning_rate: float = field(
+        default_factory=lambda: CONFIG["optimizer"]["lr"],
+        metadata={"help": "Learning rate"},
+    )
+    device: str = field(
+        default_factory=lambda: CONFIG["model"]["device"],
+        metadata={"help": "Device for training (cpu or cuda)"},
+    )
     dropout_rate: float = field(
-        default_factory=lambda: CONFIG["classifier"]["dropout_rate"]
+        default_factory=lambda: CONFIG["classifier"]["dropout_rate"],
+        metadata={"help": "Dropout rate"},
     )
-    metric: str = field(default_factory=lambda: CONFIG["model"]["metric"])
-    metrics: List[str] = field(default_factory=lambda: CONFIG["model"]["metrics"])
+    metric: str = field(
+        default_factory=lambda: CONFIG["model"]["metric"],
+        metadata={"help": "Evaluation metric"},
+    )
+    metrics: List[str] = field(
+        default_factory=lambda: CONFIG["model"]["metrics"],
+        metadata={"help": "List of metrics to compute"},
+    )
     data_file: Path = field(
-        default_factory=lambda: Path(CONFIG["data"]["files"]["default"])
+        default_factory=lambda: Path(CONFIG["data"]["files"]["default"]),
+        metadata={"help": "Path to the main data file"},
     )
     n_trials: Optional[int] = field(
-        default_factory=lambda: CONFIG.get("optimization", {}).get("n_trials", 100)
+        default_factory=lambda: CONFIG.get("optimization", {}).get("n_trials", 100),
+        metadata={"help": "Number of optimization trials"},
     )
     n_experiments: int = field(
-        default_factory=lambda: CONFIG.get("optimization", {}).get("n_experiments", 1)
+        default_factory=lambda: CONFIG.get("optimization", {}).get("n_experiments", 1),
+        metadata={"help": "Number of optimization experiments"},
     )
     trials_per_experiment: Optional[int] = None
     sampler: str = field(
-        default_factory=lambda: CONFIG.get("optimization", {}).get("sampler", "tpe")
+        default_factory=lambda: CONFIG.get("optimization", {}).get("sampler", "tpe"),
+        metadata={"help": "Sampler for Optuna"},
     )
-    output_root: Path = field(default_factory=lambda: Path(CONFIG["output_root"]))
+    output_root: Path = field(
+        default_factory=lambda: Path(CONFIG["output_root"]),
+        metadata={"help": "Root directory for all outputs"},
+    )
     verbosity: int = field(
-        default_factory=lambda: CONFIG.get("logging", {}).get("verbosity", 1)
+        default_factory=lambda: CONFIG.get("logging", {}).get("verbosity", 1),
+        metadata={"help": "Verbosity level"},
     )
 
     def __post_init__(self):
@@ -172,12 +232,10 @@ class ModelConfig(BaseConfig):
         self.data_file = Path(config["data"]["files"]["default"])
 
         # Resolve data_file relative to output_root
-        if not self.data_file.is_absolute():
-            self.data_file = self.output_root / "data" / self.data_file.name
+        self.data_file = resolve_path(self.data_file, self.output_root / "data")
 
         # Resolve bert_encoder_path relative to output_root if not absolute
-        if not self.bert_encoder_path.is_absolute():
-            self.bert_encoder_path = self.output_root / self.bert_encoder_path
+        self.bert_encoder_path = resolve_path(self.bert_encoder_path, self.output_root)
 
         # Create necessary directories
         self.best_trials_dir.mkdir(parents=True, exist_ok=True)
@@ -275,16 +333,6 @@ class ModelConfig(BaseConfig):
             help="Verbosity level",
         )
 
-    def validate(self) -> None:
-        """Validate configuration."""
-        super().validate()
-        if self.num_classes is not None and self.num_classes < 1:
-            raise ValueError("num_classes must be positive if specified")
-        if self.max_seq_len < 1:
-            raise ValueError("max_seq_len must be positive")
-        if not isinstance(self.metrics, list):
-            raise ValueError("metrics must be a list")
-
 
 @dataclass
 class ValidationConfig(ModelConfig):
@@ -352,15 +400,12 @@ class PredictionConfig(ModelConfig):
     def __post_init__(self):
         """Initialize paths after parent initialization."""
         super().__post_init__()  # This will set bert_encoder_path correctly
-
         # Set up prediction-specific paths
         self.output_dir = self.predictions_dir = self.output_root / "predictions"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
         # Ensure bert_encoder_path is absolute
         if not self.bert_encoder_path.is_absolute():
             self.bert_encoder_path = self.output_root / self.bert_encoder_path
-
         logger.debug("Using BERT encoder from: %s", self.bert_encoder_path)
 
     @classmethod
