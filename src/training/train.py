@@ -444,40 +444,46 @@ def train_model(model_config: ModelConfig, clf_config: dict = None) -> None:
 
 
 def plot_learning_curves(training_metrics, validation_metrics, output_dir):
-    """Plot learning curves using Seaborn."""
-    # Combine training and validation metrics into a single DataFrame
-    all_metrics = training_metrics + validation_metrics
-    metrics_df = pd.DataFrame(all_metrics)
+    """Plot learning curves with two panels: loss and primary metric."""
+    import pandas as pd  # Ensure pandas is imported
 
-    # Use Seaborn to create the learning curves plot
-    plt.figure(figsize=(12, 6))
+    # Merge metrics from both datasets
+    df = pd.DataFrame(training_metrics + validation_metrics)
+
+    # Identify the primary metric (assumed non-loss) from training metrics
+    primary_metric = df.loc[df["metric"] != "loss", "metric"].unique()[0]
+
+    # Create two side-by-side subplots
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
     sns.set(style="darkgrid")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Left panel: Loss curve
+    loss_df = df[df["metric"] == "loss"]
     sns.lineplot(
-        data=metrics_df,
-        x="epoch",
-        y="value",
-        hue="metric",
-        style="dataset",
-        markers=True,
-        dashes=False,
+        data=loss_df, x="epoch", y="value", hue="dataset", marker="o", ax=axes[0]
     )
+    axes[0].set_title("Training and Validation Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].set_xticks(sorted(loss_df["epoch"].unique()))
 
-    # Customize the plot
-    plt.title("Learning Curves", fontsize=16)
-    plt.xlabel("Epoch", fontsize=12)
-    plt.ylabel("Metric Value", fontsize=12)
-    plt.legend(title="Legend", loc="best")
-
-    # Set x-ticks to integer values
-    plt.xticks(range(1, len(set(metrics_df["epoch"])) + 1))
+    # Right panel: Primary metric curve
+    metric_df = df[df["metric"] == primary_metric]
+    sns.lineplot(
+        data=metric_df, x="epoch", y="value", hue="dataset", marker="o", ax=axes[1]
+    )
+    axes[1].set_title(f"Training and Validation {primary_metric.capitalize()}")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel(primary_metric.capitalize())
+    axes[1].set_xticks(sorted(metric_df["epoch"].unique()))
 
     plt.tight_layout()
-
-    # Save the plot
     plot_path = output_dir / "learning_curves.png"
     plt.savefig(plot_path)
     plt.close()
-
     logger.info(f"Learning curves plot saved to: {plot_path}")
 
 
